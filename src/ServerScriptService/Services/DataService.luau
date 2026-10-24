@@ -35,6 +35,7 @@ local Signal = require(ReplicatedStorage.Shared.Util.Signal)
 local EconomyConfig = require(ReplicatedStorage.Shared.Config.EconomyConfig)
 local IslandConfig = require(ReplicatedStorage.Shared.Config.IslandConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
+local CritterConfig = require(ReplicatedStorage.Shared.Config.CritterConfig)
 
 type PlayerData = Types.PlayerData
 
@@ -68,7 +69,7 @@ type StoredRecord = {
 local SETTINGS = {
 	STORE_NAME = "SkyIslandExplorers_PlayerData_v1",
 	KEY_PREFIX = "Player_",
-	SCHEMA_VERSION = 1,
+	SCHEMA_VERSION = 2,
 
 	AUTOSAVE_INTERVAL = 120, -- detik (2 menit)
 	AUTOSAVE_STAGGER = 0.25, -- jeda antar pemain saat autosave agar tidak membebani budget DataStore
@@ -103,9 +104,25 @@ local loadingPlayers: { [Player]: boolean } = {}
 local pendingReleases: { [number]: boolean } = {} -- UserId yang sedang disimpan & dilepas
 
 -- Migrasi skema: MIGRATIONS[n] mengubah data dari versi n ke n+1.
--- Contoh jika nanti SCHEMA_VERSION = 2:
---   [1] = function(data) data.Settings = { Music = true } end,
-local MIGRATIONS: { [number]: (data: any) -> () } = {}
+local MIGRATIONS: { [number]: (data: any) -> () } = {
+	-- v1 -> v2 (Tahap 2): Id pulau diganti mengikuti daftar pulau final
+	[1] = function(data: any)
+		local renamed = {
+			Crystal = "MistForest",
+			Storm = "ThunderDesert",
+			Aurora = "IceCrystal",
+			Starfall = "RainbowPalace",
+		}
+		if type(data.UnlockedIslands) == "table" then
+			for oldId, newId in renamed do
+				if data.UnlockedIslands[oldId] then
+					data.UnlockedIslands[oldId] = nil
+					data.UnlockedIslands[newId] = true
+				end
+			end
+		end
+	end,
+}
 
 ---------------------------------------------------------------------
 -- Utilitas
@@ -219,6 +236,22 @@ local function sanitize(data: PlayerData): ()
 			data.UnlockedIslands[island.Id] = true
 		end
 	end
+
+	-- Buang isi tas yang rusak atau critter-nya sudah tidak ada di config
+	local cleanBag: { Types.BagItem } = {}
+	for _, item in data.Bag do
+		if type(item) == "table" and typeof(item.CritterId) == "string" and CritterConfig.Get(item.CritterId) then
+			table.insert(cleanBag, {
+				CritterId = item.CritterId,
+				Shiny = item.Shiny == true,
+				CaughtAt = tonumber(item.CaughtAt) or 0,
+			})
+		end
+	end
+	if #cleanBag ~= #data.Bag then
+		warn(string.format("[DataService] %d item tas tidak valid dibuang", #data.Bag - #cleanBag))
+	end
+	data.Bag = cleanBag
 end
 
 local function updateLoginStreak(data: PlayerData): ()
@@ -629,6 +662,13 @@ function DataService.SaveNow(player: Player): boolean
 		return false
 	end
 	return saveProfile(profile, false)
+end
+
+-- Menaikkan penghitung revisi profil. Setiap event state ke client membawa nomor ini
+-- agar client bisa mengabaikan update yang lebih lama dari yang sudah diterima.
+function DataService.NextRevision(profile: Profile): number
+	profile.Revision += 1
+	return profile.Revision
 end
 
 function DataService.IsUsingMockStore(): boolean

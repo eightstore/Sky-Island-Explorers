@@ -4,7 +4,14 @@
 	------------------------
 	Titik masuk client. Menunggu game selesai dimuat (agar ReplicatedStorage sudah tereplikasi),
 	lalu menjalankan Init & Start setiap controller.
-	Controller lain (Input, Glider, Effects) akan ditambahkan di tahap berikutnya.
+
+	Urutan penting:
+	  StateController   -> harus pertama (controller lain membaca state darinya)
+	  EffectsController -> dipakai UI, Island, dan Input
+	  UIController      -> menyediakan toast & jendela
+	  IslandController  -> tampilan gerbang pulau
+	  InputController   -> klik/tap/gamepad untuk menangkap critter
+	GliderController akan ditambahkan di tahap berikutnya.
 ]]
 
 if not game:IsLoaded() then
@@ -20,7 +27,11 @@ type Controller = {
 }
 
 local orderedControllers: { Controller } = {
+	require(Controllers.StateController),
+	require(Controllers.EffectsController),
 	require(Controllers.UIController),
+	require(Controllers.IslandController),
+	require(Controllers.InputController),
 }
 
 for _, controller in orderedControllers do

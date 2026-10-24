@@ -3,23 +3,96 @@
 	IslandConfig
 	------------
 	Daftar pulau berurutan dari terendah ke tertinggi.
-	Tahap 1 hanya memakai Id, DisplayName, Order, dan DefaultUnlocked (untuk data awal & leaderstats).
-	Harga buka pulau, bioma, dan titik spawn akan ditambahkan di tahap berikutnya.
+
+	Syarat membuka pulau:
+	  1. Pulau sebelumnya (Order - 1) sudah terbuka
+	  2. Level Glider >= RequiredGliderLevel
+	  3. Membayar UnlockCost essence di gerbang pulau
+
+	Height = ketinggian permukaan pulau (sumbu Y, dalam stud) sebagai acuan saat membangun map.
+	Critters = daftar CritterId yang muncul di pulau ini (detailnya di CritterConfig).
 ]]
 
 export type IslandDef = {
 	Id: string,
 	DisplayName: string,
 	Order: number, -- 1 = paling rendah
+	Height: number, -- acuan ketinggian (Y) permukaan pulau, dalam stud
+	UnlockCost: number, -- essence
+	RequiredGliderLevel: number,
 	DefaultUnlocked: boolean,
+	Critters: { string },
+	MaxCritters: number, -- batas critter hidup sekaligus di pulau ini
+	RespawnDelay: number, -- detik sebelum slot critter yang tertangkap boleh diisi lagi
+	Color: Color3, -- warna tema (papan gerbang, UI)
 }
 
 local Islands: { IslandDef } = {
-	{ Id = "Meadow", DisplayName = "Padang Awan", Order = 1, DefaultUnlocked = true },
-	{ Id = "Crystal", DisplayName = "Gua Kristal", Order = 2, DefaultUnlocked = false },
-	{ Id = "Storm", DisplayName = "Puncak Badai", Order = 3, DefaultUnlocked = false },
-	{ Id = "Aurora", DisplayName = "Taman Aurora", Order = 4, DefaultUnlocked = false },
-	{ Id = "Starfall", DisplayName = "Mahkota Bintang", Order = 5, DefaultUnlocked = false },
+	{
+		Id = "Meadow",
+		DisplayName = "Padang Awan",
+		Order = 1,
+		Height = 50,
+		UnlockCost = 0,
+		RequiredGliderLevel = 1,
+		DefaultUnlocked = true,
+		Critters = { "CloudBunny", "LeafWing", "BreezeBee", "SunPuff" },
+		MaxCritters = 10,
+		RespawnDelay = 6,
+		Color = Color3.fromRGB(140, 220, 120),
+	},
+	{
+		Id = "MistForest",
+		DisplayName = "Hutan Kabut",
+		Order = 2,
+		Height = 150,
+		UnlockCost = 750,
+		RequiredGliderLevel = 3,
+		DefaultUnlocked = false,
+		Critters = { "MistMoth", "FogFox", "DewSprite", "MossDragonling" },
+		MaxCritters = 10,
+		RespawnDelay = 8,
+		Color = Color3.fromRGB(120, 170, 150),
+	},
+	{
+		Id = "ThunderDesert",
+		DisplayName = "Gurun Petir",
+		Order = 3,
+		Height = 300,
+		UnlockCost = 6000,
+		RequiredGliderLevel = 6,
+		DefaultUnlocked = false,
+		Critters = { "SparkBeetle", "SandSerpent", "VoltHawk", "ThunderRam", "StormDjinn" },
+		MaxCritters = 9,
+		RespawnDelay = 10,
+		Color = Color3.fromRGB(240, 200, 90),
+	},
+	{
+		Id = "IceCrystal",
+		DisplayName = "Kristal Es",
+		Order = 4,
+		Height = 500,
+		UnlockCost = 40000,
+		RequiredGliderLevel = 10,
+		DefaultUnlocked = false,
+		Critters = { "FrostPenguin", "CrystalCat", "AuroraOwl", "GlacierWhale", "IcePhoenix" },
+		MaxCritters = 8,
+		RespawnDelay = 12,
+		Color = Color3.fromRGB(150, 220, 255),
+	},
+	{
+		Id = "RainbowPalace",
+		DisplayName = "Istana Pelangi",
+		Order = 5,
+		Height = 750,
+		UnlockCost = 250000,
+		RequiredGliderLevel = 15,
+		DefaultUnlocked = false,
+		Critters = { "PrismPup", "RainbowKoi", "StarUnicorn", "HaloGriffin", "CelestialDragon", "SkySpirit" },
+		MaxCritters = 8,
+		RespawnDelay = 15,
+		Color = Color3.fromRGB(255, 150, 220),
+	},
 }
 
 table.sort(Islands, function(a, b)
@@ -36,8 +109,33 @@ local IslandConfig = {}
 
 IslandConfig.Islands = Islands
 
+-- Pengaturan gerbang pulau & anti-exploit
+IslandConfig.Gate = table.freeze({
+	Tag = "IslandGate", -- tag CollectionService untuk Part/Model gerbang
+	IdAttribute = "IslandId", -- atribut string di gerbang: Id pulau yang dijaga
+	PromptName = "IslandGatePrompt",
+	PromptDistance = 12, -- jarak ProximityPrompt muncul
+	InteractDistance = 22, -- jarak maksimum yang diterima server (ada toleransi lag)
+	ClientAutoCloseDistance = 20, -- dialog otomatis tertutup jika pemain menjauh
+	UnlockCooldown = 0.5, -- jeda minimum antar permintaan buka pulau (detik)
+})
+
 function IslandConfig.Get(id: string): IslandDef?
 	return byId[id]
+end
+
+-- Pulau sebelum pulau ini (nil untuk pulau pertama)
+function IslandConfig.GetPrevious(id: string): IslandDef?
+	local island = byId[id]
+	if not island then
+		return nil
+	end
+	for _, other in Islands do
+		if other.Order == island.Order - 1 then
+			return other
+		end
+	end
+	return nil
 end
 
 -- Mengembalikan pulau tertinggi yang sudah terbuka (minimal pulau pertama)

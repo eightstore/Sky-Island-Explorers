@@ -9,6 +9,7 @@
 		EconomyService.AddEssence(player, amount, reason) -> (berhasil, saldoBaru)
 		EconomyService.SpendEssence(player, amount, reason) -> (berhasil, pesanError?)
 		EconomyService.GetUpgradeLevel(player, upgradeId) -> number
+		EconomyService.GetUpgradeStats(player, upgradeId) -> { [statId]: number }
 		EconomyService.EssenceChanged : Signal (player, saldoBaru, delta, reason)
 		EconomyService.UpgradeChanged : Signal (player, upgradeId, levelBaru)
 
@@ -17,7 +18,7 @@
 	menyelip. Karena itu SpendEssence dan alur beli upgrade sengaja ditulis TANPA yield.
 
 	Remote yang ditangani:
-		GetInitialState  : snapshot saldo & level untuk UI client
+		GetInitialState  : snapshot saldo, level, isi tas, dan pulau terbuka untuk client
 		PurchaseUpgrade  : beli upgrade (validasi penuh di server)
 ]]
 
@@ -32,6 +33,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Config.EconomyConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
 local DataService = require(ServerScriptService.Services.DataService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
+local PromptFactory = require(ServerScriptService.Util.PromptFactory)
 
 type PurchaseResult = Types.PurchaseResult
 type ClientSnapshot = Types.ClientSnapshot
@@ -71,21 +73,19 @@ local function sanitizeReason(reason: any): string
 	return string.sub(reason, 1, MAX_REASON_LENGTH)
 end
 
-local function nextRevision(profile: DataService.Profile): number
-	profile.Revision += 1
-	return profile.Revision
-end
-
 local function broadcastEssence(profile: DataService.Profile, delta: number, reason: string): ()
 	local player = profile.Player
 	local balance = profile.Data.Essence
-	local revision = nextRevision(profile)
-	essenceChangedRemote:FireClient(player, balance, delta, reason, revision)
+	essenceChangedRemote:FireClient(player, balance, delta, reason, DataService.NextRevision(profile))
 	EconomyService.EssenceChanged:Fire(player, balance, delta, reason)
 end
 
 local function reject(message: string): PurchaseResult
 	return { Success = false, Message = message }
+end
+
+local function emptySnapshot(): ClientSnapshot
+	return { Loaded = false, Essence = 0, Upgrades = {}, BagCount = 0, UnlockedIslands = {}, Revision = 0 }
 end
 
 ---------------------------------------------------------------------
@@ -208,7 +208,7 @@ local function handlePurchaseUpgrade(player: Player, upgradeId: any): PurchaseRe
 	local newLevel = currentLevel + 1
 	profile.Data.Upgrades[def.Id] = newLevel
 
-	upgradeChangedRemote:FireClient(player, def.Id, newLevel, nextRevision(profile))
+	upgradeChangedRemote:FireClient(player, def.Id, newLevel, DataService.NextRevision(profile))
 	EconomyService.UpgradeChanged:Fire(player, def.Id, newLevel)
 
 	return {
@@ -224,12 +224,15 @@ local function handleGetInitialState(player: Player): ClientSnapshot
 	-- Boleh yield di sini (menunggu data dimuat) karena tidak mengubah ekonomi
 	local profile = DataService.WaitForProfile(player, SNAPSHOT_WAIT_TIMEOUT)
 	if not profile then
-		return { Loaded = false, Essence = 0, Upgrades = {}, Revision = 0 }
+		return emptySnapshot()
 	end
+	local data = profile.Data
 	return {
 		Loaded = true,
-		Essence = profile.Data.Essence,
-		Upgrades = table.clone(profile.Data.Upgrades),
+		Essence = data.Essence,
+		Upgrades = table.clone(data.Upgrades),
+		BagCount = #data.Bag,
+		UnlockedIslands = table.clone(data.UnlockedIslands),
 		Revision = profile.Revision,
 	}
 end
@@ -238,32 +241,13 @@ end
 -- Toko upgrade di dunia
 ---------------------------------------------------------------------
 
--- Membuat ProximityPrompt di setiap Part/Model ber-tag UpgradeShop (mendukung keyboard, touch & gamepad)
 local function setupShop(instance: Instance): ()
-	local host: Instance? = nil
-	if instance:IsA("BasePart") then
-		host = instance
-	elseif instance:IsA("Model") then
-		host = instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true)
-	end
-	if not host then
-		warn("[EconomyService] Objek ber-tag " .. UpgradeConfig.Shop.Tag .. " harus berupa Part atau Model berisi Part: " .. instance:GetFullName())
-		return
-	end
-	if host:FindFirstChild(UpgradeConfig.Shop.PromptName) then
-		return
-	end
-
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = UpgradeConfig.Shop.PromptName
-	prompt.ActionText = "Buka Toko"
-	prompt.ObjectText = "Toko Upgrade"
-	prompt.HoldDuration = 0
-	prompt.MaxActivationDistance = UpgradeConfig.Shop.PromptDistance
-	prompt.RequiresLineOfSight = false
-	prompt.KeyboardKeyCode = Enum.KeyCode.E
-	prompt.GamepadKeyCode = Enum.KeyCode.ButtonX
-	prompt.Parent = host
+	PromptFactory.Attach(instance, {
+		Name = UpgradeConfig.Shop.PromptName,
+		ActionText = "Buka Toko",
+		ObjectText = "Toko Upgrade",
+		MaxActivationDistance = UpgradeConfig.Shop.PromptDistance,
+	})
 end
 
 ---------------------------------------------------------------------
@@ -290,7 +274,7 @@ function EconomyService.Start(): ()
 		Cooldown = UpgradeConfig.Shop.SnapshotCooldown,
 		MaxArgs = 0,
 		OnReject = function(_message: string): any
-			return { Loaded = false, Essence = 0, Upgrades = {}, Revision = 0 }
+			return emptySnapshot()
 		end,
 	}, handleGetInitialState)
 

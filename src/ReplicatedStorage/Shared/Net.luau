@@ -20,12 +20,17 @@ Net.WAIT_TIMEOUT = 30
 Net.Events = table.freeze({
 	EssenceChanged = "EssenceChanged", -- (saldoBaru: number, delta: number, alasan: string, revisi: number)
 	UpgradeChanged = "UpgradeChanged", -- (upgradeId: string, levelBaru: number, revisi: number)
+	BagChanged = "BagChanged", -- (jumlahIsiTas: number, revisi: number)
+	IslandUnlocked = "IslandUnlocked", -- (islandId: string, revisi: number)
 })
 
 -- Client -> Server (dengan nilai balik)
 Net.Functions = table.freeze({
 	GetInitialState = "GetInitialState", -- () -> ClientSnapshot
 	PurchaseUpgrade = "PurchaseUpgrade", -- (upgradeId: string) -> PurchaseResult
+	CatchCritter = "CatchCritter", -- (critterUid: string) -> CatchResult
+	DepositBag = "DepositBag", -- () -> DepositResult
+	UnlockIsland = "UnlockIsland", -- (islandId: string) -> UnlockResult
 })
 
 -- Membuat semua remote. HANYA dipanggil server.

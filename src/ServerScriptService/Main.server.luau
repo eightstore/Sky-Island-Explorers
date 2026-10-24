@@ -26,6 +26,8 @@ local orderedServices: { { Name: string, Module: Service } } = {
 	{ Name = "DataService", Module = require(Services.DataService) },
 	{ Name = "EconomyService", Module = require(Services.EconomyService) },
 	{ Name = "LeaderboardService", Module = require(Services.LeaderboardService) },
+	{ Name = "IslandService", Module = require(Services.IslandService) },
+	{ Name = "CritterService", Module = require(Services.CritterService) },
 }
 
 for _, entry in orderedServices do

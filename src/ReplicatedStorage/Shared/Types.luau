@@ -9,7 +9,7 @@
 -- Level setiap upgrade, contoh: { Net = 3, Glider = 1, Bag = 5 }
 export type UpgradeLevels = { [string]: number }
 
--- Satu critter yang sedang dibawa di tas (belum ditaruh di markas)
+-- Satu critter yang sedang dibawa di tas (belum disetor / ditaruh di markas)
 export type BagItem = {
 	CritterId: string,
 	Shiny: boolean,
@@ -67,6 +67,8 @@ export type ClientSnapshot = {
 	Loaded: boolean,
 	Essence: number,
 	Upgrades: UpgradeLevels,
+	BagCount: number,
+	UnlockedIslands: { [string]: boolean },
 	Revision: number,
 }
 
@@ -77,6 +79,32 @@ export type PurchaseResult = {
 	UpgradeId: string?,
 	NewLevel: number?,
 	Essence: number?,
+}
+
+-- Hasil remote CatchCritter
+export type CatchResult = {
+	Success: boolean,
+	Message: string,
+	CritterId: string?,
+	Shiny: boolean?,
+	IsNew: boolean?, -- true jika baru pertama kali ditangkap (masuk buku koleksi)
+	BagCount: number?,
+	BagFull: boolean?,
+}
+
+-- Hasil remote DepositBag
+export type DepositResult = {
+	Success: boolean,
+	Message: string,
+	Count: number?,
+	Gained: number?,
+}
+
+-- Hasil remote UnlockIsland
+export type UnlockResult = {
+	Success: boolean,
+	Message: string,
+	IslandId: string?,
 }
 
 return {}
