@@ -11,23 +11,33 @@
 
 	Changed:Fire(key, ...) dengan key:
 		"Loaded"                      -- snapshot pertama diterima
-		"Essence", delta              -- saldo berubah
+		"Essence", delta, reason      -- saldo berubah (reason mis. "Passive", "Deposit")
 		"Upgrades", upgradeId         -- level upgrade berubah
-		"Bag"                         -- jumlah isi tas berubah
+		"Bag"                         -- isi tas berubah
+		"Base"                        -- isi markas berubah
+		"Collection"                  -- koleksi / hadiah album berubah
 		"Islands", islandId?          -- pulau terbuka
+	AlbumCompleted:Fire(islandId, reward) -- satu bioma album baru lengkap
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Types = require(ReplicatedStorage.Shared.Types)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Signal = require(ReplicatedStorage.Shared.Util.Signal)
 local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
+local CritterConfig = require(ReplicatedStorage.Shared.Config.CritterConfig)
+
+type CritterView = Types.CritterView
+type CollectionView = Types.CollectionView
+type OfflineReport = Types.OfflineReport
 
 local SNAPSHOT_MAX_ATTEMPTS = 10
 
 local StateController = {}
 
 StateController.Changed = Signal.new()
+StateController.AlbumCompleted = Signal.new()
 -- Dipicu jika snapshot gagal dimuat setelah semua percobaan
 StateController.LoadFailed = Signal.new()
 
@@ -35,16 +45,64 @@ local state = {
 	Loaded = false,
 	Essence = 0,
 	Upgrades = {} :: { [string]: number },
-	BagCount = 0,
+	Bag = {} :: { CritterView },
+	BaseCritters = {} :: { CritterView },
+	Collection = {} :: CollectionView,
+	AlbumClaimed = {} :: { [string]: boolean },
 	UnlockedIslands = {} :: { [string]: boolean },
+	OfflineReport = nil :: OfflineReport?,
 }
 
 local revisions = {
 	Essence = -1,
 	Bag = -1,
+	Base = -1,
+	Collection = -1,
 	Upgrades = {} :: { [string]: number },
 	Islands = {} :: { [string]: number },
 }
+
+---------------------------------------------------------------------
+-- Validasi data dari server
+---------------------------------------------------------------------
+
+local function parseCritterList(value: any): { CritterView }?
+	if type(value) ~= "table" then
+		return nil
+	end
+	local result: { CritterView } = {}
+	for _, item in value do
+		if type(item) == "table" and typeof(item.CritterId) == "string" then
+			table.insert(result, { CritterId = item.CritterId, Shiny = item.Shiny == true })
+		end
+	end
+	return result
+end
+
+local function parseCollection(value: any): CollectionView?
+	if type(value) ~= "table" then
+		return nil
+	end
+	local result: CollectionView = {}
+	for critterId, entry in value do
+		if typeof(critterId) == "string" and type(entry) == "table" then
+			result[critterId] = { Caught = tonumber(entry.Caught) or 0, Shiny = tonumber(entry.Shiny) or 0 }
+		end
+	end
+	return result
+end
+
+local function parseFlags(value: any): { [string]: boolean }
+	local result: { [string]: boolean } = {}
+	if type(value) == "table" then
+		for key, flag in value do
+			if typeof(key) == "string" and flag == true then
+				result[key] = true
+			end
+		end
+	end
+	return result
+end
 
 ---------------------------------------------------------------------
 -- Getter
@@ -66,8 +124,12 @@ function StateController.GetUpgradeStat(upgradeId: string, statId: string): numb
 	return UpgradeConfig.GetStats(upgradeId, StateController.GetUpgradeLevel(upgradeId))[statId] or 0
 end
 
+function StateController.GetBag(): { CritterView }
+	return state.Bag
+end
+
 function StateController.GetBagCount(): number
-	return state.BagCount
+	return #state.Bag
 end
 
 function StateController.GetBagCapacity(): number
@@ -75,24 +137,56 @@ function StateController.GetBagCapacity(): number
 end
 
 function StateController.IsBagFull(): boolean
-	return state.BagCount >= StateController.GetBagCapacity()
+	return #state.Bag >= StateController.GetBagCapacity()
+end
+
+function StateController.GetBaseCritters(): { CritterView }
+	return state.BaseCritters
+end
+
+function StateController.GetBaseSlots(): number
+	return StateController.GetUpgradeStat("Base", "Slots")
+end
+
+-- Perkiraan essence pasif per menit (untuk tampilan; perhitungan asli di server)
+function StateController.GetPassiveRate(): number
+	local rate = 0
+	for _, item in state.BaseCritters do
+		rate += CritterConfig.GetPassive(item.CritterId, item.Shiny)
+	end
+	return rate
+end
+
+function StateController.GetCollection(): CollectionView
+	return state.Collection
+end
+
+function StateController.IsAlbumClaimed(islandId: string): boolean
+	return state.AlbumClaimed[islandId] == true
 end
 
 function StateController.IsIslandUnlocked(islandId: string): boolean
 	return state.UnlockedIslands[islandId] == true
 end
 
+-- Laporan offline earnings dari snapshot awal (diambil sekali, lalu dikosongkan)
+function StateController.TakeOfflineReport(): OfflineReport?
+	local report = state.OfflineReport
+	state.OfflineReport = nil
+	return report
+end
+
 ---------------------------------------------------------------------
 -- Penerapan update
 ---------------------------------------------------------------------
 
-local function applyEssence(balance: number, revision: number, delta: number): ()
+local function applyEssence(balance: number, revision: number, delta: number, reason: string): ()
 	if revision < revisions.Essence then
 		return
 	end
 	revisions.Essence = revision
 	state.Essence = balance
-	StateController.Changed:Fire("Essence", delta)
+	StateController.Changed:Fire("Essence", delta, reason)
 end
 
 local function applyUpgrade(upgradeId: string, level: number, revision: number): ()
@@ -104,13 +198,32 @@ local function applyUpgrade(upgradeId: string, level: number, revision: number):
 	StateController.Changed:Fire("Upgrades", upgradeId)
 end
 
-local function applyBag(count: number, revision: number): ()
+local function applyBag(items: { CritterView }, revision: number): ()
 	if revision < revisions.Bag then
 		return
 	end
 	revisions.Bag = revision
-	state.BagCount = count
+	state.Bag = items
 	StateController.Changed:Fire("Bag")
+end
+
+local function applyBase(items: { CritterView }, revision: number): ()
+	if revision < revisions.Base then
+		return
+	end
+	revisions.Base = revision
+	state.BaseCritters = items
+	StateController.Changed:Fire("Base")
+end
+
+local function applyCollection(collection: CollectionView, claimed: { [string]: boolean }, revision: number): ()
+	if revision < revisions.Collection then
+		return
+	end
+	revisions.Collection = revision
+	state.Collection = collection
+	state.AlbumClaimed = claimed
+	StateController.Changed:Fire("Collection")
 end
 
 local function applyIsland(islandId: string, revision: number): ()
@@ -127,24 +240,32 @@ local function applySnapshot(snapshot: any): boolean
 		return false
 	end
 	local revision = snapshot.Revision
-	if typeof(snapshot.Essence) ~= "number" or typeof(revision) ~= "number" or typeof(snapshot.BagCount) ~= "number" then
+	if typeof(snapshot.Essence) ~= "number" or typeof(revision) ~= "number" or type(snapshot.Upgrades) ~= "table" then
 		return false
 	end
-	if type(snapshot.Upgrades) ~= "table" or type(snapshot.UnlockedIslands) ~= "table" then
+	local bag = parseCritterList(snapshot.Bag)
+	local base = parseCritterList(snapshot.BaseCritters)
+	local collection = parseCollection(snapshot.Collection)
+	if not bag or not base or not collection then
 		return false
 	end
 
-	applyEssence(snapshot.Essence, revision, 0)
-	applyBag(snapshot.BagCount, revision)
+	applyEssence(snapshot.Essence, revision, 0, "Snapshot")
+	applyBag(bag, revision)
+	applyBase(base, revision)
+	applyCollection(collection, parseFlags(snapshot.AlbumClaimed), revision)
 	for upgradeId, level in snapshot.Upgrades do
 		if typeof(upgradeId) == "string" and typeof(level) == "number" then
 			applyUpgrade(upgradeId, level, revision)
 		end
 	end
-	for islandId, unlocked in snapshot.UnlockedIslands do
-		if typeof(islandId) == "string" and unlocked == true then
-			applyIsland(islandId, revision)
-		end
+	for islandId in parseFlags(snapshot.UnlockedIslands) do
+		applyIsland(islandId, revision)
+	end
+
+	local report = snapshot.OfflineReport
+	if type(report) == "table" and typeof(report.Amount) == "number" and typeof(report.Seconds) == "number" then
+		state.OfflineReport = { Amount = report.Amount, Seconds = report.Seconds }
 	end
 
 	state.Loaded = true
@@ -171,9 +292,9 @@ end
 ---------------------------------------------------------------------
 
 function StateController.Init(): ()
-	Net.Event(Net.Events.EssenceChanged).OnClientEvent:Connect(function(balance: any, delta: any, _reason: any, revision: any)
+	Net.Event(Net.Events.EssenceChanged).OnClientEvent:Connect(function(balance: any, delta: any, reason: any, revision: any)
 		if typeof(balance) == "number" and typeof(revision) == "number" then
-			applyEssence(balance, revision, if typeof(delta) == "number" then delta else 0)
+			applyEssence(balance, revision, if typeof(delta) == "number" then delta else 0, if typeof(reason) == "string" then reason else "")
 		end
 	end)
 
@@ -183,15 +304,36 @@ function StateController.Init(): ()
 		end
 	end)
 
-	Net.Event(Net.Events.BagChanged).OnClientEvent:Connect(function(count: any, revision: any)
-		if typeof(count) == "number" and typeof(revision) == "number" then
-			applyBag(count, revision)
+	Net.Event(Net.Events.BagChanged).OnClientEvent:Connect(function(items: any, revision: any)
+		local parsed = parseCritterList(items)
+		if parsed and typeof(revision) == "number" then
+			applyBag(parsed, revision)
+		end
+	end)
+
+	Net.Event(Net.Events.BaseChanged).OnClientEvent:Connect(function(items: any, revision: any)
+		local parsed = parseCritterList(items)
+		if parsed and typeof(revision) == "number" then
+			applyBase(parsed, revision)
+		end
+	end)
+
+	Net.Event(Net.Events.CollectionChanged).OnClientEvent:Connect(function(collection: any, claimed: any, revision: any)
+		local parsed = parseCollection(collection)
+		if parsed and typeof(revision) == "number" then
+			applyCollection(parsed, parseFlags(claimed), revision)
 		end
 	end)
 
 	Net.Event(Net.Events.IslandUnlocked).OnClientEvent:Connect(function(islandId: any, revision: any)
 		if typeof(islandId) == "string" and typeof(revision) == "number" then
 			applyIsland(islandId, revision)
+		end
+	end)
+
+	Net.Event(Net.Events.AlbumCompleted).OnClientEvent:Connect(function(islandId: any, reward: any)
+		if typeof(islandId) == "string" and typeof(reward) == "number" then
+			StateController.AlbumCompleted:Fire(islandId, reward)
 		end
 	end)
 end

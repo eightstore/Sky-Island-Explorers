@@ -7,18 +7,20 @@
 
 	Urutan penting:
 	  StateController   -> harus pertama (controller lain membaca state darinya)
-	  EffectsController -> dipakai UI, Island, dan Input
-	  UIController      -> menyediakan toast & jendela
+	  EffectsController -> dipakai UI, Island, Input, Glider, Base, Album
+	  UIController      -> menyediakan ScreenGui, toast, jendela, tombol HUD, pengarah prompt
 	  IslandController  -> tampilan gerbang pulau
 	  InputController   -> klik/tap/gamepad untuk menangkap critter
-	GliderController akan ditambahkan di tahap berikutnya.
+	  GliderController  -> melayang dengan glider
+	  BaseController    -> jendela & tampilan markas
+	  AlbumController   -> album koleksi
 ]]
 
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
 
--- Folder Controllers disalin bersama script ini ke PlayerScripts, jadi path statis aman
+-- Folder Controllers & UI disalin bersama script ini ke PlayerScripts, jadi path statis aman
 local Controllers = script.Parent.Controllers
 
 type Controller = {
@@ -32,6 +34,9 @@ local orderedControllers: { Controller } = {
 	require(Controllers.UIController),
 	require(Controllers.IslandController),
 	require(Controllers.InputController),
+	require(Controllers.GliderController),
+	require(Controllers.BaseController),
+	require(Controllers.AlbumController),
 }
 
 for _, controller in orderedControllers do

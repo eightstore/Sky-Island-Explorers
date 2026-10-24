@@ -34,6 +34,7 @@ local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
 local DataService = require(ServerScriptService.Services.DataService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
 local PromptFactory = require(ServerScriptService.Util.PromptFactory)
+local StateViews = require(ServerScriptService.Util.StateViews)
 
 type PurchaseResult = Types.PurchaseResult
 type ClientSnapshot = Types.ClientSnapshot
@@ -85,7 +86,18 @@ local function reject(message: string): PurchaseResult
 end
 
 local function emptySnapshot(): ClientSnapshot
-	return { Loaded = false, Essence = 0, Upgrades = {}, BagCount = 0, UnlockedIslands = {}, Revision = 0 }
+	return {
+		Loaded = false,
+		Essence = 0,
+		Upgrades = {},
+		Bag = {},
+		BaseCritters = {},
+		Collection = {},
+		AlbumClaimed = {},
+		UnlockedIslands = {},
+		OfflineReport = nil,
+		Revision = 0,
+	}
 end
 
 ---------------------------------------------------------------------
@@ -227,12 +239,19 @@ local function handleGetInitialState(player: Player): ClientSnapshot
 		return emptySnapshot()
 	end
 	local data = profile.Data
+	-- Laporan offline hanya dikirim sekali
+	local offlineReport = profile.OfflineReport
+	profile.OfflineReport = nil
 	return {
 		Loaded = true,
 		Essence = data.Essence,
 		Upgrades = table.clone(data.Upgrades),
-		BagCount = #data.Bag,
+		Bag = StateViews.Critters(data.Bag),
+		BaseCritters = StateViews.Critters(data.BaseCritters),
+		Collection = StateViews.Collection(data.Collection),
+		AlbumClaimed = table.clone(data.AlbumClaimed),
 		UnlockedIslands = table.clone(data.UnlockedIslands),
+		OfflineReport = offlineReport,
 		Revision = profile.Revision,
 	}
 end

@@ -16,12 +16,16 @@ local Net = {}
 Net.FOLDER_NAME = "Remotes"
 Net.WAIT_TIMEOUT = 30
 
--- Server -> Client
+-- RemoteEvent. Arah ditulis di komentar: [S->C] server ke client, [C->S] client ke server.
 Net.Events = table.freeze({
-	EssenceChanged = "EssenceChanged", -- (saldoBaru: number, delta: number, alasan: string, revisi: number)
-	UpgradeChanged = "UpgradeChanged", -- (upgradeId: string, levelBaru: number, revisi: number)
-	BagChanged = "BagChanged", -- (jumlahIsiTas: number, revisi: number)
-	IslandUnlocked = "IslandUnlocked", -- (islandId: string, revisi: number)
+	EssenceChanged = "EssenceChanged", -- [S->C] (saldoBaru: number, delta: number, alasan: string, revisi: number)
+	UpgradeChanged = "UpgradeChanged", -- [S->C] (upgradeId: string, levelBaru: number, revisi: number)
+	BagChanged = "BagChanged", -- [S->C] (isiTas: {CritterView}, revisi: number)
+	BaseChanged = "BaseChanged", -- [S->C] (isiMarkas: {CritterView}, revisi: number)
+	CollectionChanged = "CollectionChanged", -- [S->C] (koleksi: CollectionView, hadiahAlbum: {[IslandId]: true}, revisi: number)
+	IslandUnlocked = "IslandUnlocked", -- [S->C] (islandId: string, revisi: number)
+	AlbumCompleted = "AlbumCompleted", -- [S->C] (islandId: string, hadiah: number)
+	GliderState = "GliderState", -- [C->S] (sedangMelayang: boolean)
 })
 
 -- Client -> Server (dengan nilai balik)
@@ -31,6 +35,8 @@ Net.Functions = table.freeze({
 	CatchCritter = "CatchCritter", -- (critterUid: string) -> CatchResult
 	DepositBag = "DepositBag", -- () -> DepositResult
 	UnlockIsland = "UnlockIsland", -- (islandId: string) -> UnlockResult
+	PlaceCritter = "PlaceCritter", -- (indeksTas: number, critterId: string) -> ActionResult
+	RetrieveCritter = "RetrieveCritter", -- (indeksSlot: number, critterId: string) -> ActionResult
 })
 
 -- Membuat semua remote. HANYA dipanggil server.

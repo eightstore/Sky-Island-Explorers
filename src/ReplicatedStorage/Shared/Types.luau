@@ -60,6 +60,24 @@ export type PlayerData = {
 	Cosmetics: Cosmetics,
 	Stats: PlayerStats,
 	FirstJoinTime: number,
+	LastPassiveTime: number, -- os.time() terakhir essence pasif markas dihitung
+	PassiveRemainder: number, -- sisa pecahan essence pasif (agar 1.5/menit tidak hilang)
+	AlbumClaimed: { [string]: boolean }, -- IslandId -> hadiah album sudah diberikan
+}
+
+-- Versi ringkas critter (isi tas / markas) yang dikirim ke client
+export type CritterView = {
+	CritterId: string,
+	Shiny: boolean,
+}
+
+-- Versi ringkas koleksi untuk client: CritterId -> jumlah
+export type CollectionView = { [string]: { Caught: number, Shiny: number } }
+
+-- Laporan essence yang terkumpul saat pemain offline
+export type OfflineReport = {
+	Amount: number,
+	Seconds: number,
 }
 
 -- Snapshot awal yang dikirim server ke client
@@ -67,9 +85,19 @@ export type ClientSnapshot = {
 	Loaded: boolean,
 	Essence: number,
 	Upgrades: UpgradeLevels,
-	BagCount: number,
+	Bag: { CritterView },
+	BaseCritters: { CritterView },
+	Collection: CollectionView,
+	AlbumClaimed: { [string]: boolean },
 	UnlockedIslands: { [string]: boolean },
+	OfflineReport: OfflineReport?,
 	Revision: number,
+}
+
+-- Hasil umum remote (PlaceCritter, RetrieveCritter, dll.)
+export type ActionResult = {
+	Success: boolean,
+	Message: string,
 }
 
 -- Hasil remote PurchaseUpgrade

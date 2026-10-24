@@ -187,6 +187,15 @@ function CritterConfig.GetValue(id: string, shiny: boolean): number
 	return def.EssenceValue * (if shiny then CritterConfig.Shiny.ValueMultiplier else 1)
 end
 
+-- Essence pasif per menit saat ditaruh di markas
+function CritterConfig.GetPassive(id: string, shiny: boolean): number
+	local def = Critters[id]
+	if not def then
+		return 0
+	end
+	return def.PassivePerMinute * (if shiny then CritterConfig.Shiny.ValueMultiplier else 1)
+end
+
 -- Memilih satu critter dari daftar berdasarkan SpawnWeight
 function CritterConfig.PickWeighted(critterIds: { string }, rng: Random): string?
 	local total = 0

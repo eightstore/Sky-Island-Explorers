@@ -49,6 +49,7 @@ export type Profile = {
 	IsSaving: boolean,
 	Revision: number, -- penghitung perubahan (tidak disimpan) agar client bisa mengabaikan update usang
 	PlayTimeMark: number, -- os.clock() terakhir play time dihitung
+	OfflineReport: Types.OfflineReport?, -- diisi BaseService saat dimuat, dikirim di snapshot awal
 	LoadedAt: number,
 	LastSavedAt: number,
 }
@@ -69,7 +70,7 @@ type StoredRecord = {
 local SETTINGS = {
 	STORE_NAME = "SkyIslandExplorers_PlayerData_v1",
 	KEY_PREFIX = "Player_",
-	SCHEMA_VERSION = 2,
+	SCHEMA_VERSION = 3,
 
 	AUTOSAVE_INTERVAL = 120, -- detik (2 menit)
 	AUTOSAVE_STAGGER = 0.25, -- jeda antar pemain saat autosave agar tidak membebani budget DataStore
@@ -122,6 +123,8 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 			end
 		end
 	end,
+	-- v2 -> v3 (Tahap 3): field markas pasif & album ditambahkan otomatis oleh reconcile
+	[2] = function(_data: any) end,
 }
 
 ---------------------------------------------------------------------
@@ -177,6 +180,9 @@ local function createTemplate(): PlayerData
 			PlayTimeSeconds = 0,
 		},
 		FirstJoinTime = os.time(),
+		LastPassiveTime = 0,
+		PassiveRemainder = 0,
+		AlbumClaimed = {},
 	}
 end
 
@@ -434,6 +440,7 @@ local function loadProfile(player: Player): (Profile?, string?)
 				IsSaving = false,
 				Revision = 0,
 				PlayTimeMark = os.clock(),
+				OfflineReport = nil,
 				LoadedAt = os.time(),
 				LastSavedAt = os.time(),
 			}

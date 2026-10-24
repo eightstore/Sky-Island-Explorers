@@ -25,6 +25,7 @@ export type IslandDef = {
 	MaxCritters: number, -- batas critter hidup sekaligus di pulau ini
 	RespawnDelay: number, -- detik sebelum slot critter yang tertangkap boleh diisi lagi
 	Color: Color3, -- warna tema (papan gerbang, UI)
+	AlbumReward: number, -- essence saat semua critter pulau ini pernah ditangkap
 }
 
 local Islands: { IslandDef } = {
@@ -40,6 +41,7 @@ local Islands: { IslandDef } = {
 		MaxCritters = 10,
 		RespawnDelay = 6,
 		Color = Color3.fromRGB(140, 220, 120),
+		AlbumReward = 200,
 	},
 	{
 		Id = "MistForest",
@@ -53,6 +55,7 @@ local Islands: { IslandDef } = {
 		MaxCritters = 10,
 		RespawnDelay = 8,
 		Color = Color3.fromRGB(120, 170, 150),
+		AlbumReward = 2000,
 	},
 	{
 		Id = "ThunderDesert",
@@ -66,6 +69,7 @@ local Islands: { IslandDef } = {
 		MaxCritters = 9,
 		RespawnDelay = 10,
 		Color = Color3.fromRGB(240, 200, 90),
+		AlbumReward = 15000,
 	},
 	{
 		Id = "IceCrystal",
@@ -79,6 +83,7 @@ local Islands: { IslandDef } = {
 		MaxCritters = 8,
 		RespawnDelay = 12,
 		Color = Color3.fromRGB(150, 220, 255),
+		AlbumReward = 100000,
 	},
 	{
 		Id = "RainbowPalace",
@@ -92,6 +97,7 @@ local Islands: { IslandDef } = {
 		MaxCritters = 8,
 		RespawnDelay = 15,
 		Color = Color3.fromRGB(255, 150, 220),
+		AlbumReward = 750000,
 	},
 }
 

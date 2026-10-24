@@ -45,6 +45,7 @@ local DataService = require(ServerScriptService.Services.DataService)
 local EconomyService = require(ServerScriptService.Services.EconomyService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
 local PromptFactory = require(ServerScriptService.Util.PromptFactory)
+local StateViews = require(ServerScriptService.Util.StateViews)
 
 type CatchResult = Types.CatchResult
 type DepositResult = Types.DepositResult
@@ -114,8 +115,14 @@ local function getNetStats(player: Player): (number, number)
 end
 
 local function sendBag(profile: DataService.Profile): ()
-	bagChangedRemote:FireClient(profile.Player, #profile.Data.Bag, DataService.NextRevision(profile))
+	bagChangedRemote:FireClient(profile.Player, StateViews.Critters(profile.Data.Bag), DataService.NextRevision(profile))
 end
+
+-- Kirim ulang isi tas ke client (dipakai BaseService saat critter dipindah tas <-> markas)
+CritterService.SyncBag = sendBag
+
+-- Kapasitas tas pemain saat ini (dari upgrade Tas)
+CritterService.GetBagCapacity = getBagCapacity
 
 ---------------------------------------------------------------------
 -- Pembuatan visual critter

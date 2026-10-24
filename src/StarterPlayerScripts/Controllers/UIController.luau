@@ -2,19 +2,22 @@
 --[[
 	UIController
 	------------
-	Semua UI layar:
-	  • HUD: saldo Essence & isi tas (🎒 3/10, merah jika penuh)
-	  • Toko Upgrade (dibuka lewat ProximityPrompt toko)
-	  • Dialog Buka Pulau (dibuka lewat ProximityPrompt gerbang): harga, syarat glider,
-	    pulau sebelumnya, dan tombol konfirmasi (anti salah pencet untuk anak-anak)
-	  • Setor tas (ProximityPrompt Zona Setor)
-	  • Toast (pesan singkat) yang bisa dipakai controller lain: UIController.ShowToast(...)
+	Pusat UI layar dan "infrastruktur" untuk controller lain:
+	  • HUD: saldo Essence & isi tas (🎒 3/10, merah jika penuh) + tombol HUD di kiri (Album, dll.)
+	  • Manajer jendela modal: hanya satu terbuka, tombol B gamepad menutup,
+	    tertutup otomatis jika pemain menjauh dari objeknya
+	  • Toast (pesan singkat) untuk semua controller
+	  • Pengarah ProximityPrompt: controller lain mendaftar lewat RegisterPrompt
+	  • Jendela milik UIController sendiri: Toko Upgrade, Dialog Buka Pulau, Setor tas
 
-	Prinsip:
-	  • Client TIDAK pernah menentukan saldo/level. Semua nilai dibaca dari StateController.
-	  • UI dibuat lewat kode dan diskalakan otomatis untuk HP, tablet, PC, dan konsol.
-	  • Hanya satu jendela (modal) terbuka pada satu waktu. Tombol B gamepad menutupnya,
-	    dan jendela tertutup otomatis jika pemain berjalan menjauh.
+	API publik:
+		UIController.ShowToast(pesan, positif, durasi?)
+		UIController.OpenModal(modal) / CloseModal() / IsModalOpen(frame)
+		UIController.GetGui() -> ScreenGui
+		UIController.AddHudButton(nama, ikon, teks, urutan, callback) -> TextButton
+		UIController.RegisterPrompt(namaPrompt, callback(prompt))
+
+	Client TIDAK pernah menentukan saldo/level. Semua nilai dibaca dari StateController.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -23,7 +26,6 @@ local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -32,38 +34,18 @@ local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
 local IslandConfig = require(ReplicatedStorage.Shared.Config.IslandConfig)
 local CritterConfig = require(ReplicatedStorage.Shared.Config.CritterConfig)
 local NumberFormat = require(ReplicatedStorage.Shared.Util.NumberFormat)
+local UIKit = require(script.Parent.Parent.UI.UIKit)
 local StateController = require(script.Parent.StateController)
 local EffectsController = require(script.Parent.EffectsController)
+
+type Modal = UIKit.Modal
+
+local THEME = UIKit.THEME
+local make = UIKit.Make
 
 local localPlayer = Players.LocalPlayer
 
 local UIController = {}
-
----------------------------------------------------------------------
--- Tampilan (bukan balancing gameplay)
----------------------------------------------------------------------
-
-local THEME = {
-	Font = Enum.Font.FredokaOne,
-	HudBackground = Color3.fromRGB(28, 44, 84),
-	Panel = Color3.fromRGB(235, 245, 255),
-	PanelStroke = Color3.fromRGB(120, 170, 240),
-	Card = Color3.fromRGB(255, 255, 255),
-	IconBackground = Color3.fromRGB(200, 225, 255),
-	Text = Color3.fromRGB(35, 45, 70),
-	TextMuted = Color3.fromRGB(95, 105, 130),
-	TextLight = Color3.fromRGB(255, 255, 255),
-	Buy = Color3.fromRGB(70, 195, 105),
-	CannotAfford = Color3.fromRGB(165, 172, 188),
-	Max = Color3.fromRGB(255, 190, 50),
-	Close = Color3.fromRGB(235, 95, 95),
-	Positive = Color3.fromRGB(60, 170, 90),
-	Negative = Color3.fromRGB(215, 85, 85),
-	BagFull = Color3.fromRGB(200, 60, 60),
-	NextValue = "#2E9E50",
-	Ok = "#2E9E50",
-	NotOk = "#D04545",
-}
 
 local REFERENCE_SIZE = Vector2.new(1000, 560) -- resolusi acuan desain
 local MIN_SCALE = 0.65 -- batas bawah agar tombol tetap besar di HP
@@ -89,7 +71,6 @@ type IslandDialogRefs = {
 	Title: TextLabel,
 	Body: TextLabel,
 	ConfirmButton: TextButton,
-	CancelButton: TextButton,
 }
 
 type UiRefs = {
@@ -100,20 +81,12 @@ type UiRefs = {
 	BagFrame: Frame,
 	BagLabel: TextLabel,
 	BagPop: UIScale,
+	HudButtons: Frame,
 	ShopFrame: Frame,
 	ShopPop: UIScale,
-	ShopClose: TextButton,
 	Cards: { [string]: CardRefs },
 	Island: IslandDialogRefs,
 	Toast: TextLabel,
-}
-
-type Modal = {
-	Frame: Frame,
-	Pop: UIScale,
-	IsInRange: () -> boolean,
-	FirstSelectable: () -> GuiObject?,
-	OnRefresh: () -> (),
 }
 
 local ui: UiRefs? = nil
@@ -121,105 +94,23 @@ local currentModal: Modal? = nil
 local currentIslandId: string? = nil
 local pendingRequest = false
 local toastToken = 0
+local promptHandlers: { [string]: (ProximityPrompt) -> () } = {}
 
 local purchaseRemote: RemoteFunction? = nil
 local depositRemote: RemoteFunction? = nil
 local unlockRemote: RemoteFunction? = nil
 
----------------------------------------------------------------------
--- Helper pembuatan UI
----------------------------------------------------------------------
-
--- Membuat instance dengan properti. Parent diset terakhir (lebih efisien).
-local function make(className: string, props: { [string]: any }): any
-	local instance = Instance.new(className :: any)
-	for key, value in props do
-		if key ~= "Parent" then
-			(instance :: any)[key] = value
-		end
-	end
-	if props.Parent then
-		instance.Parent = props.Parent
-	end
-	return instance
-end
-
-local function addCorner(parent: Instance, radius: number): ()
-	make("UICorner", { CornerRadius = UDim.new(0, radius), Parent = parent })
-end
-
-local function addStroke(parent: Instance, color: Color3, thickness: number): ()
-	make("UIStroke", {
-		Color = color,
-		Thickness = thickness,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = parent,
-	})
-end
-
-local function addPadding(parent: Instance, pixels: number): ()
-	make("UIPadding", {
-		PaddingTop = UDim.new(0, pixels),
-		PaddingBottom = UDim.new(0, pixels),
-		PaddingLeft = UDim.new(0, pixels),
-		PaddingRight = UDim.new(0, pixels),
-		Parent = parent,
-	})
-end
-
-local function popTween(scale: UIScale, from: number): ()
-	scale.Scale = from
-	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-end
-
-local function makeBigButton(props: { [string]: any }): TextButton
-	local button: TextButton = make("TextButton", {
-		Name = props.Name,
-		AnchorPoint = props.AnchorPoint or Vector2.zero,
-		Position = props.Position,
-		Size = props.Size,
-		BackgroundColor3 = props.Color,
-		Text = props.Text,
-		TextColor3 = THEME.TextLight,
-		TextSize = props.TextSize or 26,
-		TextWrapped = true,
-		Font = THEME.Font,
-		AutoButtonColor = true,
-		Selectable = true,
-		Parent = props.Parent,
-	})
-	addCorner(button, 18)
-	make("UIStroke", {
-		Color = Color3.fromRGB(40, 60, 90),
-		Thickness = 2,
-		Transparency = 0.5,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
-		Parent = button,
-	})
-	return button
-end
-
-local function makeModalFrame(name: string, size: Vector2, parent: Instance): (Frame, UIScale)
-	local frame: Frame = make("Frame", {
-		Name = name,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.53),
-		Size = UDim2.fromOffset(size.X, size.Y),
-		BackgroundColor3 = THEME.Panel,
-		Visible = false,
-		Parent = parent,
-	})
-	addCorner(frame, 26)
-	addStroke(frame, THEME.PanelStroke, 4)
-	local pop: UIScale = make("UIScale", { Parent = frame })
-	return frame, pop
+local function getUi(): UiRefs
+	local refs = ui
+	assert(refs, "UIController belum di-Init")
+	return refs
 end
 
 ---------------------------------------------------------------------
 -- Toast (pesan singkat)
 ---------------------------------------------------------------------
 
-function UIController.ShowToast(message: string, positive: boolean): ()
+function UIController.ShowToast(message: string, positive: boolean, duration: number?): ()
 	local refs = ui
 	if not refs then
 		return
@@ -231,7 +122,7 @@ function UIController.ShowToast(message: string, positive: boolean): ()
 	refs.Toast.BackgroundColor3 = if positive then THEME.Positive else THEME.Negative
 	refs.Toast.Visible = true
 
-	task.delay(TOAST_DURATION, function()
+	task.delay(duration or TOAST_DURATION, function()
 		if toastToken == myToken then
 			refs.Toast.Visible = false
 		end
@@ -244,7 +135,7 @@ local showToast = UIController.ShowToast
 -- Jarak ke objek ber-tag (untuk menutup jendela otomatis)
 ---------------------------------------------------------------------
 
-local function getRootPosition(): Vector3?
+function UIController.GetRootPosition(): Vector3?
 	local character = localPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if root and root:IsA("BasePart") then
@@ -262,8 +153,8 @@ local function getInstancePosition(instance: Instance): Vector3?
 	return nil
 end
 
-local function isNearTagged(tag: string, maxDistance: number, filter: ((Instance) -> boolean)?): boolean
-	local rootPosition = getRootPosition()
+function UIController.IsNearTagged(tag: string, maxDistance: number, filter: ((Instance) -> boolean)?): boolean
+	local rootPosition = UIController.GetRootPosition()
 	if not rootPosition then
 		return false
 	end
@@ -278,6 +169,8 @@ local function isNearTagged(tag: string, maxDistance: number, filter: ((Instance
 	return false
 end
 
+local isNearTagged = UIController.IsNearTagged
+
 ---------------------------------------------------------------------
 -- HUD
 ---------------------------------------------------------------------
@@ -289,7 +182,7 @@ local function renderHud(animateEssence: boolean, animateBag: boolean): ()
 	end
 	refs.EssenceLabel.Text = "✨ " .. NumberFormat.Abbreviate(StateController.GetEssence())
 	if animateEssence then
-		popTween(refs.EssencePop, 1.15)
+		UIKit.Pop(refs.EssencePop, 1.15)
 	end
 
 	local count = StateController.GetBagCount()
@@ -297,15 +190,37 @@ local function renderHud(animateEssence: boolean, animateBag: boolean): ()
 	refs.BagLabel.Text = string.format("🎒 %d/%d", count, capacity)
 	refs.BagFrame.BackgroundColor3 = if count >= capacity then THEME.BagFull else THEME.HudBackground
 	if animateBag then
-		popTween(refs.BagPop, 1.15)
+		UIKit.Pop(refs.BagPop, 1.15)
 	end
 end
 
+-- Tombol bulat besar di sisi kiri layar (Album, dll.)
+function UIController.AddHudButton(name: string, icon: string, label: string, order: number, callback: () -> ()): TextButton
+	local refs = getUi()
+	local button = UIKit.BigButton({
+		Name = name,
+		Size = UDim2.fromOffset(96, 96),
+		Color = THEME.HudBackground,
+		Text = icon .. "\n" .. label,
+		TextSize = 20,
+		LayoutOrder = order,
+		Radius = 24,
+		Parent = refs.HudButtons,
+	})
+	UIKit.Stroke(button, THEME.PanelStroke, 3)
+	button.Activated:Connect(callback)
+	return button
+end
+
+function UIController.GetGui(): ScreenGui
+	return getUi().Gui
+end
+
 ---------------------------------------------------------------------
--- Modal (satu jendela pada satu waktu)
+-- Manajer modal (satu jendela pada satu waktu)
 ---------------------------------------------------------------------
 
-local function closeModal(): ()
+function UIController.CloseModal(): ()
 	local modal = currentModal
 	if not modal then
 		return
@@ -320,14 +235,16 @@ local function closeModal(): ()
 	end
 end
 
-local function openModal(modal: Modal): ()
+local closeModal = UIController.CloseModal
+
+function UIController.OpenModal(modal: Modal): ()
 	if currentModal then
 		closeModal()
 	end
 	currentModal = modal
 	modal.OnRefresh()
 	modal.Frame.Visible = true
-	popTween(modal.Pop, 0.85)
+	UIKit.Pop(modal.Pop, 0.85)
 
 	-- Tombol B pada gamepad menutup jendela
 	ContextActionService:BindActionAtPriority(CLOSE_ACTION_NAME, function(_name: string, inputState: Enum.UserInputState, _input: InputObject): Enum.ContextActionResult
@@ -346,11 +263,26 @@ local function openModal(modal: Modal): ()
 	end
 end
 
+local openModal = UIController.OpenModal
+
+function UIController.IsModalOpen(frame: Frame): boolean
+	local modal = currentModal
+	return modal ~= nil and modal.Frame == frame
+end
+
 local function refreshModal(): ()
 	local modal = currentModal
 	if modal then
 		modal.OnRefresh()
 	end
+end
+
+---------------------------------------------------------------------
+-- ProximityPrompt
+---------------------------------------------------------------------
+
+function UIController.RegisterPrompt(promptName: string, callback: (ProximityPrompt) -> ()): ()
+	promptHandlers[promptName] = callback
 end
 
 ---------------------------------------------------------------------
@@ -444,7 +376,7 @@ local function requestPurchase(upgradeId: string): ()
 			local card = refs.Cards[upgradeId]
 			local pop = card and card.Frame:FindFirstChildOfClass("UIScale")
 			if pop then
-				popTween(pop, 1.05)
+				UIKit.Pop(pop, 1.05)
 			end
 		end
 	else
@@ -462,8 +394,8 @@ local function buildCard(def: UpgradeConfig.UpgradeDef, parent: Instance): CardR
 		LayoutOrder = def.Order,
 		Parent = parent,
 	})
-	addCorner(frame, 18)
-	addStroke(frame, THEME.PanelStroke, 2)
+	UIKit.Corner(frame, 18)
+	UIKit.Stroke(frame, THEME.PanelStroke, 2)
 	make("UIScale", { Parent = frame })
 
 	local icon: TextLabel = make("TextLabel", {
@@ -477,8 +409,8 @@ local function buildCard(def: UpgradeConfig.UpgradeDef, parent: Instance): CardR
 		Font = THEME.Font,
 		Parent = frame,
 	})
-	addCorner(icon, 20)
-	addPadding(icon, 10)
+	UIKit.Corner(icon, 20)
+	UIKit.Padding(icon, 10)
 
 	make("TextLabel", {
 		Name = "Title",
@@ -522,7 +454,7 @@ local function buildCard(def: UpgradeConfig.UpgradeDef, parent: Instance): CardR
 		Parent = frame,
 	})
 
-	local buyButton = makeBigButton({
+	local buyButton = UIKit.BigButton({
 		Name = "BuyButton",
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -14, 0.5, 0),
@@ -540,12 +472,9 @@ local function buildCard(def: UpgradeConfig.UpgradeDef, parent: Instance): CardR
 	return { Frame = frame, Level = level, Stats = stats, BuyButton = buyButton }
 end
 
-local function getShopModal(): Modal?
-	local refs = ui
-	if not refs then
-		return nil
-	end
-	return {
+function UIController.OpenShop(): ()
+	local refs = getUi()
+	openModal({
 		Frame = refs.ShopFrame,
 		Pop = refs.ShopPop,
 		IsInRange = function(): boolean
@@ -557,7 +486,7 @@ local function getShopModal(): Modal?
 			return if card then card.BuyButton else nil
 		end,
 		OnRefresh = renderShop,
-	}
+	})
 end
 
 ---------------------------------------------------------------------
@@ -601,8 +530,7 @@ local function describeIsland(island: IslandConfig.IslandDef): (boolean, string)
 		local def = CritterConfig.Get(critterId)
 		local rarity = def and CritterConfig.GetRarity(def.Rarity)
 		if def and rarity then
-			local hex = rarity.Color:ToHex()
-			table.insert(names, string.format('<font color="#%s">%s</font> %s%%', hex, def.DisplayName, string.format("%.1f", (odds[critterId] or 0) * 100)))
+			table.insert(names, string.format('<font color="#%s">%s</font> %.1f%%', rarity.Color:ToHex(), def.DisplayName, (odds[critterId] or 0) * 100))
 		end
 	end
 	table.insert(lines, "")
@@ -685,47 +613,28 @@ local function requestUnlock(): ()
 	renderIslandDialog()
 end
 
-local function getIslandModal(): Modal?
-	local refs = ui
-	if not refs then
-		return nil
+function UIController.OpenIslandDialog(islandId: string): ()
+	if not IslandConfig.Get(islandId) then
+		return
 	end
-	return {
+	local refs = getUi()
+	openModal({
 		Frame = refs.Island.Frame,
 		Pop = refs.Island.Pop,
 		IsInRange = function(): boolean
-			local islandId = currentIslandId
+			local id = currentIslandId
 			return isNearTagged(IslandConfig.Gate.Tag, IslandConfig.Gate.ClientAutoCloseDistance, function(gate: Instance): boolean
-				return gate:GetAttribute(IslandConfig.Gate.IdAttribute) == islandId
+				return gate:GetAttribute(IslandConfig.Gate.IdAttribute) == id
 			end)
 		end,
 		FirstSelectable = function(): GuiObject?
 			return refs.Island.ConfirmButton
 		end,
 		OnRefresh = renderIslandDialog,
-	}
+	})
+	currentIslandId = islandId
+	renderIslandDialog()
 end
-
-function UIController.OpenIslandDialog(islandId: string): ()
-	if not IslandConfig.Get(islandId) then
-		return
-	end
-	local modal = getIslandModal()
-	if modal then
-		openModal(modal)
-		currentIslandId = islandId
-		renderIslandDialog()
-	end
-end
-
-function UIController.OpenShop(): ()
-	local modal = getShopModal()
-	if modal then
-		openModal(modal)
-	end
-end
-
-UIController.CloseModal = closeModal
 
 ---------------------------------------------------------------------
 -- Setor tas
@@ -750,10 +659,10 @@ local function requestDeposit(): ()
 	if ok and type(result) == "table" and type(result.Message) == "string" then
 		local success = result.Success == true
 		showToast(result.Message, success)
-		local rootPosition = getRootPosition()
+		local rootPosition = UIController.GetRootPosition()
 		if success and rootPosition and typeof(result.Gained) == "number" then
-			EffectsController.Burst(rootPosition, Color3.fromRGB(255, 215, 70), 40)
-			EffectsController.FloatText(rootPosition + Vector3.new(0, 4, 0), "+" .. NumberFormat.Abbreviate(result.Gained) .. " ✨", Color3.fromRGB(255, 215, 70), true)
+			EffectsController.Burst(rootPosition, THEME.Gold, 40)
+			EffectsController.FloatText(rootPosition + Vector3.new(0, 4, 0), "+" .. NumberFormat.Abbreviate(result.Gained) .. " ✨", THEME.Gold, true)
 		end
 	else
 		showToast("Koneksi bermasalah, coba lagi ya.", false)
@@ -765,20 +674,8 @@ end
 ---------------------------------------------------------------------
 
 local function buildIslandDialog(parent: Instance): IslandDialogRefs
-	local frame, pop = makeModalFrame("IslandDialog", Vector2.new(600, 420), parent)
-
-	local title: TextLabel = make("TextLabel", {
-		Name = "Title",
-		Position = UDim2.fromOffset(24, 10),
-		Size = UDim2.new(1, -120, 0, 60),
-		BackgroundTransparency = 1,
-		Text = "🏝️ Pulau",
-		TextColor3 = THEME.Text,
-		TextSize = 38,
-		Font = THEME.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = frame,
-	})
+	local frame, pop = UIKit.ModalFrame("IslandDialog", Vector2.new(600, 420), parent)
+	local title = UIKit.Title(frame, "🏝️ Pulau")
 
 	local body: TextLabel = make("TextLabel", {
 		Name = "Body",
@@ -796,7 +693,7 @@ local function buildIslandDialog(parent: Instance): IslandDialogRefs
 		Parent = frame,
 	})
 
-	local cancel = makeBigButton({
+	local cancel = UIKit.BigButton({
 		Name = "Cancel",
 		AnchorPoint = Vector2.new(0, 1),
 		Position = UDim2.new(0, 24, 1, -20),
@@ -806,7 +703,7 @@ local function buildIslandDialog(parent: Instance): IslandDialogRefs
 		Parent = frame,
 	})
 
-	local confirm = makeBigButton({
+	local confirm = UIKit.BigButton({
 		Name = "Confirm",
 		AnchorPoint = Vector2.new(1, 1),
 		Position = UDim2.new(1, -24, 1, -20),
@@ -819,7 +716,7 @@ local function buildIslandDialog(parent: Instance): IslandDialogRefs
 	cancel.Activated:Connect(closeModal)
 	confirm.Activated:Connect(requestUnlock)
 
-	return { Frame = frame, Pop = pop, Title = title, Body = body, ConfirmButton = confirm, CancelButton = cancel }
+	return { Frame = frame, Pop = pop, Title = title, Body = body, ConfirmButton = confirm }
 end
 
 local function buildUi(): UiRefs
@@ -860,8 +757,8 @@ local function buildUi(): UiRefs
 			LayoutOrder = order,
 			Parent = topBar,
 		})
-		addCorner(frame, 22)
-		addStroke(frame, THEME.PanelStroke, 3)
+		UIKit.Corner(frame, 22)
+		UIKit.Stroke(frame, THEME.PanelStroke, 3)
 		local pop: UIScale = make("UIScale", { Parent = frame })
 		local label: TextLabel = make("TextLabel", {
 			Name = "Value",
@@ -873,62 +770,35 @@ local function buildUi(): UiRefs
 			Font = THEME.Font,
 			Parent = frame,
 		})
-		addPadding(label, 10)
+		UIKit.Padding(label, 10)
 		return frame, label, pop
 	end
 
 	local _, essenceLabel, essencePop = hudPill("EssenceCounter", 250, 1)
 	local bagFrame, bagLabel, bagPop = hudPill("BagCounter", 190, 2)
 
-	-- Toko Upgrade
-	local shopFrame, shopPop = makeModalFrame("UpgradeShop", Vector2.new(680, 470), gui)
-
-	make("TextLabel", {
-		Name = "Title",
-		Position = UDim2.fromOffset(24, 10),
-		Size = UDim2.new(1, -120, 0, 60),
+	-- Kolom tombol HUD di kiri tengah (Album, dll.)
+	local hudButtons: Frame = make("Frame", {
+		Name = "HudButtons",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 16, 0.5, 0),
+		Size = UDim2.fromOffset(100, 320),
 		BackgroundTransparency = 1,
-		Text = "🛠️ Toko Upgrade",
-		TextColor3 = THEME.Text,
-		TextSize = 38,
-		Font = THEME.Font,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Parent = shopFrame,
-	})
-
-	local shopClose = makeBigButton({
-		Name = "Close",
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -12, 0, 12),
-		Size = UDim2.fromOffset(64, 64),
-		Color = THEME.Close,
-		Text = "✕",
-		TextSize = 34,
-		Parent = shopFrame,
-	})
-	shopClose.Activated:Connect(closeModal)
-
-	local list: ScrollingFrame = make("ScrollingFrame", {
-		Name = "List",
-		Position = UDim2.fromOffset(16, 84),
-		Size = UDim2.new(1, -32, 1, -100),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollingDirection = Enum.ScrollingDirection.Y,
-		ScrollBarThickness = 10,
-		ScrollBarImageColor3 = THEME.PanelStroke,
-		Selectable = false,
-		Parent = shopFrame,
+		Parent = gui,
 	})
 	make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
 		Padding = UDim.new(0, 12),
 		SortOrder = Enum.SortOrder.LayoutOrder,
-		HorizontalAlignment = Enum.HorizontalAlignment.Center,
-		Parent = list,
+		Parent = hudButtons,
 	})
-	make("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4), Parent = list })
+
+	-- Toko Upgrade
+	local shopFrame, shopPop = UIKit.ModalFrame("UpgradeShop", Vector2.new(680, 470), gui)
+	UIKit.Title(shopFrame, "🛠️ Toko Upgrade")
+	UIKit.CloseButton(shopFrame, closeModal)
+	local list = UIKit.ScrollList(shopFrame, UDim2.fromOffset(16, 84), UDim2.new(1, -32, 1, -100), 12)
 
 	local cards: { [string]: CardRefs } = {}
 	for _, upgradeId in UpgradeConfig.Order do
@@ -938,7 +808,6 @@ local function buildUi(): UiRefs
 		end
 	end
 
-	-- Dialog pulau
 	local island = buildIslandDialog(gui)
 
 	-- Toast (bawah tengah)
@@ -946,7 +815,7 @@ local function buildUi(): UiRefs
 		Name = "Toast",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -24),
-		Size = UDim2.fromOffset(580, 60),
+		Size = UDim2.fromOffset(600, 64),
 		BackgroundColor3 = THEME.Positive,
 		Text = "",
 		TextColor3 = THEME.TextLight,
@@ -957,8 +826,8 @@ local function buildUi(): UiRefs
 		ZIndex = 10,
 		Parent = gui,
 	})
-	addCorner(toast, 18)
-	addPadding(toast, 8)
+	UIKit.Corner(toast, 18)
+	UIKit.Padding(toast, 8)
 
 	return {
 		Gui = gui,
@@ -968,9 +837,9 @@ local function buildUi(): UiRefs
 		BagFrame = bagFrame,
 		BagLabel = bagLabel,
 		BagPop = bagPop,
+		HudButtons = hudButtons,
 		ShopFrame = shopFrame,
 		ShopPop = shopPop,
-		ShopClose = shopClose,
 		Cards = cards,
 		Island = island,
 		Toast = toast,
@@ -1030,26 +899,34 @@ function UIController.Init(): ()
 		showToast("Gagal memuat data. Coba bergabung ulang ya.", false)
 	end)
 
-	-- Semua ProximityPrompt game ini diarahkan dari sini
+	-- Prompt milik UIController
+	UIController.RegisterPrompt(UpgradeConfig.Shop.PromptName, function()
+		UIController.OpenShop()
+	end)
+	UIController.RegisterPrompt(CritterConfig.Deposit.PromptName, function()
+		task.spawn(requestDeposit)
+	end)
+	UIController.RegisterPrompt(IslandConfig.Gate.PromptName, function(prompt: ProximityPrompt)
+		-- Atribut IslandId ada di gerbang (Part) atau di salah satu Model induknya
+		local node: Instance? = prompt.Parent
+		local islandId: any = nil
+		while node and node ~= Workspace and islandId == nil do
+			islandId = node:GetAttribute(IslandConfig.Gate.IdAttribute)
+			node = node.Parent
+		end
+		if typeof(islandId) == "string" then
+			UIController.OpenIslandDialog(islandId)
+		end
+	end)
+
+	-- Semua ProximityPrompt game ini diarahkan lewat RegisterPrompt
 	ProximityPromptService.PromptTriggered:Connect(function(prompt: ProximityPrompt, triggeringPlayer: Player)
 		if triggeringPlayer ~= localPlayer then
 			return
 		end
-		if prompt.Name == UpgradeConfig.Shop.PromptName then
-			UIController.OpenShop()
-		elseif prompt.Name == CritterConfig.Deposit.PromptName then
-			task.spawn(requestDeposit)
-		elseif prompt.Name == IslandConfig.Gate.PromptName then
-			-- Atribut IslandId ada di gerbang (Part) atau di salah satu Model induknya
-			local node: Instance? = prompt.Parent
-			local islandId: any = nil
-			while node and node ~= Workspace and islandId == nil do
-				islandId = node:GetAttribute(IslandConfig.Gate.IdAttribute)
-				node = node.Parent
-			end
-			if typeof(islandId) == "string" then
-				UIController.OpenIslandDialog(islandId)
-			end
+		local handler = promptHandlers[prompt.Name]
+		if handler then
+			handler(prompt)
 		end
 	end)
 

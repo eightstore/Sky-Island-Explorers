@@ -109,6 +109,20 @@ local Upgrades: { [string]: UpgradeDef } = {
 			{ Id = "Capacity", DisplayName = "Kapasitas", Base = 10, PerLevel = 2, Decimals = 0, Unit = " critter" },
 		},
 	},
+
+	Base = {
+		Id = "Base",
+		DisplayName = "Markas",
+		Description = "Tambah slot markas untuk critter penghasil essence pasif.",
+		Icon = "🏡",
+		Order = 4,
+		MaxLevel = 18,
+		BaseCost = 100,
+		CostGrowth = 1.45,
+		Stats = {
+			{ Id = "Slots", DisplayName = "Slot Markas", Base = 3, PerLevel = 1, Decimals = 0, Unit = " slot" },
+		},
+	},
 }
 
 UpgradeConfig.Upgrades = Upgrades
