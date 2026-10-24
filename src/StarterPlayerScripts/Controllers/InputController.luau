@@ -6,6 +6,8 @@
 	  • PC     : klik critter
 	  • HP     : tap critter (tap yang sedikit meleset tetap kena critter terdekat di layar)
 	  • Gamepad: tombol R2 menangkap critter terdekat dalam radius jaring
+	  • Jaring Otomatis (perk AutoCatch): tiap beberapa detik menangkap critter terdekat secara
+	    otomatis. Tetap memakai remote CatchCritter yang sama, jadi semua validasi server berlaku.
 
 	Alur:
 	  1. Cek ramah di client (tas penuh? terlalu jauh? pulau terkunci?) -> tampilkan pesan, tanpa remote.
@@ -23,6 +25,8 @@ local Workspace = game:GetService("Workspace")
 
 local Net = require(ReplicatedStorage.Shared.Net)
 local CritterConfig = require(ReplicatedStorage.Shared.Config.CritterConfig)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
+local UIKit = require(script.Parent.Parent.UI.UIKit)
 local StateController = require(script.Parent.StateController)
 local UIController = require(script.Parent.UIController)
 local EffectsController = require(script.Parent.EffectsController)
@@ -37,6 +41,8 @@ local FAIL_COLOR = Color3.fromRGB(235, 90, 90)
 
 local catchRemote: RemoteFunction? = nil
 local catching = false
+local autoCatchEnabled = true -- pilihan pemain (tombol 🤖 di HUD)
+local autoButton: TextButton? = nil
 
 ---------------------------------------------------------------------
 -- Pencarian target
@@ -100,7 +106,13 @@ local function findNearestCritter(maxDistance: number): BasePart?
 	local best: BasePart? = nil
 	local bestDistance = maxDistance
 	for _, instance in CollectionService:GetTagged(CritterConfig.Tags.Critter) do
-		if instance:IsA("BasePart") and instance:GetAttribute(CritterConfig.Attributes.BeingCaught) ~= true then
+		local islandId = instance:GetAttribute(CritterConfig.Attributes.IslandId)
+		if
+			instance:IsA("BasePart")
+			and instance:GetAttribute(CritterConfig.Attributes.BeingCaught) ~= true
+			and typeof(islandId) == "string"
+			and StateController.IsIslandUnlocked(islandId)
+		then
 			local distance = (instance.Position - rootPosition).Magnitude
 			if distance <= bestDistance then
 				best = instance
@@ -115,7 +127,14 @@ end
 -- Tangkap
 ---------------------------------------------------------------------
 
-local function attemptCatch(target: BasePart): ()
+-- silent = true untuk Jaring Otomatis: tanpa pesan peringatan yang mengganggu
+local function attemptCatch(target: BasePart, silent: boolean?): ()
+	local function hint(message: string)
+		if not silent then
+			UIController.ShowToast(message, false)
+		end
+	end
+
 	local remote = catchRemote
 	if not remote or catching or not StateController.IsLoaded() then
 		return
@@ -130,21 +149,21 @@ local function attemptCatch(target: BasePart): ()
 
 	-- Cek ramah di client (server tetap memvalidasi semuanya)
 	if target:GetAttribute(CritterConfig.Attributes.BeingCaught) == true then
-		UIController.ShowToast("Critter itu sedang ditangkap.", false)
+		hint("Critter itu sedang ditangkap.")
 		return
 	end
 	if not StateController.IsIslandUnlocked(islandId) then
-		UIController.ShowToast("Buka pulau ini dulu di gerbangnya.", false)
+		hint("Buka pulau ini dulu di gerbangnya.")
 		return
 	end
 	if StateController.IsBagFull() then
-		UIController.ShowToast("Tas penuh! Setor dulu di markas 🎒", false)
+		hint("Tas penuh! Setor dulu di markas 🎒")
 		return
 	end
 	local rootPosition = getRootPosition()
 	local radius = StateController.GetUpgradeStat("Net", "Radius")
 	if not rootPosition or (target.Position - rootPosition).Magnitude > radius then
-		UIController.ShowToast("Terlalu jauh! Dekati critter-nya.", false)
+		hint("Terlalu jauh! Dekati critter-nya.")
 		return
 	end
 
@@ -185,7 +204,9 @@ local function attemptCatch(target: BasePart): ()
 		end
 	else
 		EffectsController.PlayCatchFail(lastPosition, "Lolos!")
-		UIController.ShowToast(result.Message, false)
+		if not silent or result.BagFull == true then
+			UIController.ShowToast(result.Message, false)
+		end
 	end
 end
 
@@ -225,12 +246,51 @@ local function onGamepadCatch(_name: string, inputState: Enum.UserInputState, _i
 	return Enum.ContextActionResult.Sink
 end
 
+---------------------------------------------------------------------
+-- Jaring Otomatis (perk AutoCatch)
+---------------------------------------------------------------------
+
+local function renderAutoButton(): ()
+	local button = autoButton
+	if not button then
+		return
+	end
+	button.Visible = StateController.HasPerk("AutoCatch")
+	button.Text = if autoCatchEnabled then "🤖\nAuto: ON" else "🤖\nAuto: OFF"
+	button.BackgroundColor3 = if autoCatchEnabled then UIKit.THEME.Buy else UIKit.THEME.HudBackground
+end
+
+local function autoCatchLoop(): ()
+	while true do
+		task.wait(ProductConfig.Effects.AutoCatchInterval)
+		if autoCatchEnabled and StateController.HasPerk("AutoCatch") and not catching and not StateController.IsBagFull() then
+			local target = findNearestCritter(StateController.GetUpgradeStat("Net", "Radius"))
+			if target then
+				task.spawn(attemptCatch, target, true)
+			end
+		end
+	end
+end
+
 function InputController.Init(): ()
 	catchRemote = Net.Function(Net.Functions.CatchCritter)
 	UserInputService.InputBegan:Connect(onInputBegan)
 	ContextActionService:BindAction(CATCH_ACTION_NAME, onGamepadCatch, false, Enum.KeyCode.ButtonR2)
+
+	autoButton = UIController.AddHudButton("AutoCatchButton", "🤖", "Auto", 3, function()
+		autoCatchEnabled = not autoCatchEnabled
+		renderAutoButton()
+	end)
+	StateController.Changed:Connect(function(key: string)
+		if key == "Attributes" or key == "Loaded" then
+			renderAutoButton()
+		end
+	end)
+	renderAutoButton()
 end
 
-function InputController.Start(): () end
+function InputController.Start(): ()
+	task.spawn(autoCatchLoop)
+end
 
 return InputController

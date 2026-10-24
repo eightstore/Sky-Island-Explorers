@@ -17,22 +17,28 @@
 		"Base"                        -- isi markas berubah
 		"Collection"                  -- koleksi / hadiah album berubah
 		"Islands", islandId?          -- pulau terbuka
+		"Attributes", name            -- atribut pemain dari server berubah (perk, luck, inkubator, streak)
 	AlbumCompleted:Fire(islandId, reward) -- satu bioma album baru lengkap
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Types = require(ReplicatedStorage.Shared.Types)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Signal = require(ReplicatedStorage.Shared.Util.Signal)
 local UpgradeConfig = require(ReplicatedStorage.Shared.Config.UpgradeConfig)
 local CritterConfig = require(ReplicatedStorage.Shared.Config.CritterConfig)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
 
 type CritterView = Types.CritterView
 type CollectionView = Types.CollectionView
 type OfflineReport = Types.OfflineReport
 
 local SNAPSHOT_MAX_ATTEMPTS = 10
+local ATTR = ProductConfig.Attributes
+local localPlayer = Players.LocalPlayer
 
 local StateController = {}
 
@@ -132,7 +138,62 @@ function StateController.GetBagCount(): number
 	return #state.Bag
 end
 
+---------------------------------------------------------------------
+-- Atribut dari server (perk, luck, inkubator, streak)
+---------------------------------------------------------------------
+
+function StateController.HasPerk(perkKey: string): boolean
+	return localPlayer:GetAttribute(ATTR.PerkPrefix .. perkKey) == true
+end
+
+-- Waktu server (detik unix) yang tersinkron, untuk menghitung sisa waktu
+function StateController.GetServerTime(): number
+	return Workspace:GetServerTimeNow()
+end
+
+function StateController.GetLuckBoostRemaining(): number
+	local endsAt = localPlayer:GetAttribute(ATTR.LuckBoostEndsAt)
+	if typeof(endsAt) ~= "number" then
+		return 0
+	end
+	return math.max(0, endsAt - StateController.GetServerTime())
+end
+
+-- Pengali luck untuk tampilan (perhitungan asli di server)
+function StateController.GetLuckMultiplier(): number
+	local multiplier = 1
+	if StateController.HasPerk("DoubleLuck") then
+		multiplier *= ProductConfig.Effects.DoubleLuckMultiplier
+	end
+	if StateController.GetLuckBoostRemaining() > 0 then
+		multiplier *= ProductConfig.Effects.LuckyPotionMultiplier
+	end
+	return multiplier
+end
+
+-- (eggId atau nil, detik tersisa)
+function StateController.GetIncubator(): (string?, number)
+	local eggId = localPlayer:GetAttribute(ATTR.IncubatorEggId)
+	local readyAt = localPlayer:GetAttribute(ATTR.IncubatorReadyAt)
+	if typeof(eggId) ~= "string" or eggId == "" or typeof(readyAt) ~= "number" then
+		return nil, 0
+	end
+	return eggId, math.max(0, readyAt - StateController.GetServerTime())
+end
+
+function StateController.GetNumberAttribute(name: string): number
+	local value = localPlayer:GetAttribute(name)
+	return if typeof(value) == "number" then value else 0
+end
+
+function StateController.HasInfiniteBag(): boolean
+	return StateController.HasPerk("InfiniteBag")
+end
+
 function StateController.GetBagCapacity(): number
+	if StateController.HasInfiniteBag() then
+		return ProductConfig.Effects.InfiniteBagCapacity
+	end
 	return StateController.GetUpgradeStat("Bag", "Capacity")
 end
 
@@ -339,6 +400,9 @@ function StateController.Init(): ()
 end
 
 function StateController.Start(): ()
+	localPlayer.AttributeChanged:Connect(function(name: string)
+		StateController.Changed:Fire("Attributes", name)
+	end)
 	loadInitialState()
 end
 

@@ -187,7 +187,9 @@ local function renderHud(animateEssence: boolean, animateBag: boolean): ()
 
 	local count = StateController.GetBagCount()
 	local capacity = StateController.GetBagCapacity()
-	refs.BagLabel.Text = string.format("🎒 %d/%d", count, capacity)
+	refs.BagLabel.Text = if StateController.HasInfiniteBag()
+		then string.format("🎒 %d/∞", count)
+		else string.format("🎒 %d/%d", count, capacity)
 	refs.BagFrame.BackgroundColor3 = if count >= capacity then THEME.BagFull else THEME.HudBackground
 	if animateBag then
 		UIKit.Pop(refs.BagPop, 1.15)
@@ -199,7 +201,7 @@ function UIController.AddHudButton(name: string, icon: string, label: string, or
 	local refs = getUi()
 	local button = UIKit.BigButton({
 		Name = name,
-		Size = UDim2.fromOffset(96, 96),
+		Size = UDim2.fromOffset(84, 84),
 		Color = THEME.HudBackground,
 		Text = icon .. "\n" .. label,
 		TextSize = 20,
@@ -782,7 +784,7 @@ local function buildUi(): UiRefs
 		Name = "HudButtons",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 16, 0.5, 0),
-		Size = UDim2.fromOffset(100, 320),
+		Size = UDim2.fromOffset(90, 480),
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
@@ -893,6 +895,13 @@ function UIController.Init(): ()
 			renderHud(false, false)
 		end
 		refreshModal()
+	end)
+
+	-- Pesan dari server (mis. pembelian berhasil diproses)
+	Net.Event(Net.Events.Notify).OnClientEvent:Connect(function(message: any, positive: any)
+		if typeof(message) == "string" then
+			showToast(message, positive == true, 4)
+		end
 	end)
 
 	StateController.LoadFailed:Connect(function()

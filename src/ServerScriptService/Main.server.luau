@@ -25,12 +25,14 @@ type Service = {
 local orderedServices: { { Name: string, Module: Service } } = {
 	{ Name = "DataService", Module = require(Services.DataService) },
 	{ Name = "EconomyService", Module = require(Services.EconomyService) },
+	{ Name = "MonetizationService", Module = require(Services.MonetizationService) },
 	{ Name = "LeaderboardService", Module = require(Services.LeaderboardService) },
 	{ Name = "IslandService", Module = require(Services.IslandService) },
 	{ Name = "CritterService", Module = require(Services.CritterService) },
 	{ Name = "BaseService", Module = require(Services.BaseService) },
 	{ Name = "AlbumService", Module = require(Services.AlbumService) },
 	{ Name = "GliderService", Module = require(Services.GliderService) },
+	{ Name = "EggService", Module = require(Services.EggService) },
 }
 
 for _, entry in orderedServices do

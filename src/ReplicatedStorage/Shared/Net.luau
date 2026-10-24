@@ -25,6 +25,7 @@ Net.Events = table.freeze({
 	CollectionChanged = "CollectionChanged", -- [S->C] (koleksi: CollectionView, hadiahAlbum: {[IslandId]: true}, revisi: number)
 	IslandUnlocked = "IslandUnlocked", -- [S->C] (islandId: string, revisi: number)
 	AlbumCompleted = "AlbumCompleted", -- [S->C] (islandId: string, hadiah: number)
+	Notify = "Notify", -- [S->C] (pesan: string, positif: boolean) mis. "Terima kasih! Lucky Potion aktif"
 	GliderState = "GliderState", -- [C->S] (sedangMelayang: boolean)
 })
 
@@ -37,6 +38,11 @@ Net.Functions = table.freeze({
 	UnlockIsland = "UnlockIsland", -- (islandId: string) -> UnlockResult
 	PlaceCritter = "PlaceCritter", -- (indeksTas: number, critterId: string) -> ActionResult
 	RetrieveCritter = "RetrieveCritter", -- (indeksSlot: number, critterId: string) -> ActionResult
+	BuyEgg = "BuyEgg", -- (eggId: string) -> ActionResult
+	HatchEgg = "HatchEgg", -- () -> HatchResult
+	RequestProductPurchase = "RequestProductPurchase", -- (productKey: string) -> ActionResult
+	BuyWithEssence = "BuyWithEssence", -- (key: string) -> ActionResult  (jalur gratis gamepass/item)
+	TeleportToIsland = "TeleportToIsland", -- (islandId: string) -> ActionResult
 })
 
 -- Membuat semua remote. HANYA dipanggil server.

@@ -70,7 +70,7 @@ type StoredRecord = {
 local SETTINGS = {
 	STORE_NAME = "SkyIslandExplorers_PlayerData_v1",
 	KEY_PREFIX = "Player_",
-	SCHEMA_VERSION = 3,
+	SCHEMA_VERSION = 4,
 
 	AUTOSAVE_INTERVAL = 120, -- detik (2 menit)
 	AUTOSAVE_STAGGER = 0.25, -- jeda antar pemain saat autosave agar tidak membebani budget DataStore
@@ -125,6 +125,8 @@ local MIGRATIONS: { [number]: (data: any) -> () } = {
 	end,
 	-- v2 -> v3 (Tahap 3): field markas pasif & album ditambahkan otomatis oleh reconcile
 	[2] = function(_data: any) end,
+	-- v3 -> v4 (Tahap 4): field telur & monetisasi ditambahkan otomatis oleh reconcile
+	[3] = function(_data: any) end,
 }
 
 ---------------------------------------------------------------------
@@ -178,11 +180,20 @@ local function createTemplate(): PlayerData
 			TotalShinyCaught = 0,
 			HighestIslandOrder = 1,
 			PlayTimeSeconds = 0,
+			EggsHatched = 0,
 		},
 		FirstJoinTime = os.time(),
 		LastPassiveTime = 0,
 		PassiveRemainder = 0,
 		AlbumClaimed = {},
+		Incubator = { EggId = "", ReadyAt = 0 },
+		OwnedPerks = {},
+		LuckBoostEndsAt = 0,
+		InstantHatchCredits = 0,
+		ReviveCredits = 0,
+		LostStreak = 0,
+		LostStreakDay = 0,
+		ProcessedReceipts = {},
 	}
 end
 
@@ -268,7 +279,16 @@ local function updateLoginStreak(data: PlayerData): ()
 		-- Sudah login hari ini, streak tidak berubah
 	elseif data.LastLoginDay == today - 1 then
 		data.LoginStreak += 1
+	elseif data.LoginStreak > 1 and data.ReviveCredits > 0 then
+		-- Streak putus, tapi pemain punya Revive Streak yang belum terpakai: lanjutkan otomatis
+		data.ReviveCredits -= 1
+		data.LoginStreak += 1
 	else
+		-- Streak putus: simpan supaya bisa dipulihkan (Revive Streak) dalam beberapa hari
+		if data.LoginStreak > 1 then
+			data.LostStreak = data.LoginStreak
+			data.LostStreakDay = today
+		end
 		data.LoginStreak = 1
 	end
 

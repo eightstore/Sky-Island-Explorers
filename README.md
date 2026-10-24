@@ -9,6 +9,7 @@ Kode ditulis dalam Luau (`--!strict`) dengan arsitektur server-authoritative. Se
 - [x] **Tahap 1** — Fondasi data & ekonomi: DataService (session locking, autosave), EconomyService, leaderstats, toko upgrade (Jaring/Glider/Tas)
 - [x] **Tahap 2** — Pulau & critter: 5 pulau dengan gerbang, 24 critter (6 rarity, shiny 1/500), spawn/gerak/tangkap, tas, Zona Setor
 - [x] **Tahap 3** — Glider (LinearVelocity + anti speed-hack), Markas dengan essence pasif & offline earnings (maks. 8 jam), Album koleksi per bioma dengan hadiah
+- [x] **Tahap 4** — Telur awan per pulau (odds tampil sebelum membeli, hasil diundi server), 5 gamepass + 6 developer product (ProcessReceipt idempoten), jalur gratis dengan Essence, Jaring Otomatis
 
 ## Struktur di Explorer
 
@@ -26,15 +27,19 @@ Ekstensi file dibuang saat dimasukkan ke Studio. `*.server.luau` menjadi Script,
 | ReplicatedStorage › Shared › Config › CritterConfig | ModuleScript | `src/ReplicatedStorage/Shared/Config/CritterConfig.luau` |
 | ReplicatedStorage › Shared › Config › GliderConfig | ModuleScript | `src/ReplicatedStorage/Shared/Config/GliderConfig.luau` |
 | ReplicatedStorage › Shared › Config › BaseConfig | ModuleScript | `src/ReplicatedStorage/Shared/Config/BaseConfig.luau` |
+| ReplicatedStorage › Shared › Config › EggConfig | ModuleScript | `src/ReplicatedStorage/Shared/Config/EggConfig.luau` |
+| ReplicatedStorage › Shared › Config › ProductConfig | ModuleScript | `src/ReplicatedStorage/Shared/Config/ProductConfig.luau` |
 | ServerScriptService › Main | Script | `src/ServerScriptService/Main.server.luau` |
 | ServerScriptService › Services › DataService | ModuleScript | `src/ServerScriptService/Services/DataService.luau` |
 | ServerScriptService › Services › EconomyService | ModuleScript | `src/ServerScriptService/Services/EconomyService.luau` |
+| ServerScriptService › Services › MonetizationService | ModuleScript | `src/ServerScriptService/Services/MonetizationService.luau` |
 | ServerScriptService › Services › LeaderboardService | ModuleScript | `src/ServerScriptService/Services/LeaderboardService.luau` |
 | ServerScriptService › Services › IslandService | ModuleScript | `src/ServerScriptService/Services/IslandService.luau` |
 | ServerScriptService › Services › CritterService | ModuleScript | `src/ServerScriptService/Services/CritterService.luau` |
 | ServerScriptService › Services › BaseService | ModuleScript | `src/ServerScriptService/Services/BaseService.luau` |
 | ServerScriptService › Services › AlbumService | ModuleScript | `src/ServerScriptService/Services/AlbumService.luau` |
 | ServerScriptService › Services › GliderService | ModuleScript | `src/ServerScriptService/Services/GliderService.luau` |
+| ServerScriptService › Services › EggService | ModuleScript | `src/ServerScriptService/Services/EggService.luau` |
 | ServerScriptService › Util › RemoteGuard | ModuleScript | `src/ServerScriptService/Util/RemoteGuard.luau` |
 | ServerScriptService › Util › PromptFactory | ModuleScript | `src/ServerScriptService/Util/PromptFactory.luau` |
 | ServerScriptService › Util › StateViews | ModuleScript | `src/ServerScriptService/Util/StateViews.luau` |
@@ -47,6 +52,8 @@ Ekstensi file dibuang saat dimasukkan ke Studio. `*.server.luau` menjadi Script,
 | StarterPlayer › StarterPlayerScripts › Controllers › GliderController | ModuleScript | `src/StarterPlayerScripts/Controllers/GliderController.luau` |
 | StarterPlayer › StarterPlayerScripts › Controllers › BaseController | ModuleScript | `src/StarterPlayerScripts/Controllers/BaseController.luau` |
 | StarterPlayer › StarterPlayerScripts › Controllers › AlbumController | ModuleScript | `src/StarterPlayerScripts/Controllers/AlbumController.luau` |
+| StarterPlayer › StarterPlayerScripts › Controllers › EggController | ModuleScript | `src/StarterPlayerScripts/Controllers/EggController.luau` |
+| StarterPlayer › StarterPlayerScripts › Controllers › StoreController | ModuleScript | `src/StarterPlayerScripts/Controllers/StoreController.luau` |
 | StarterPlayer › StarterPlayerScripts › UI › UIKit | ModuleScript | `src/StarterPlayerScripts/UI/UIKit.luau` |
 
 Folder `ReplicatedStorage/Remotes` dan `Workspace/Critters` dibuat otomatis oleh server, jadi tidak perlu dibuat manual.
@@ -77,6 +84,9 @@ Folder `ReplicatedStorage/Remotes` dan `Workspace/Critters` dibuat otomatis oleh
 5. **Gerbang pulau.** Untuk pulau 2–5, buat Part atau Model yang menghalangi jalan masuk ke pulau. Beri **tag** `IslandGate` dan **atribut** `IslandId` sesuai pulau yang dijaga.
 6. **Zona Setor.** Di markas (Padang Awan), buat Part bernama `SellZone` (Anchored) dan beri **tag** `SellZone`.
 7. **Markas (Tahap 3).** Di Padang Awan, buat Part bernama `PlayerBase` (Anchored), misalnya alas bundar 12×1×12, dan beri **tag** `PlayerBase`. Critter markas milik tiap pemain akan melayang mengelilinginya (hanya terlihat oleh pemain itu sendiri).
+8. **Toko Telur (Tahap 4).** Di Padang Awan, buat Part bernama `EggShop` (Anchored) dan beri **tag** `EggShop`.
+9. **Titik teleport (Tahap 4).** Di tiap pulau, buat Part (Anchored, CanCollide off, Transparency 1) dengan **tag** `IslandSpawn` dan **atribut** `IslandId`.
+10. **ID produk (Tahap 4).** Buat 5 Gamepass dan 6 Developer Product di Creator Hub, lalu isi `PassId`/`ProductId` di `ProductConfig` (semua masih `0`, bertanda `-- ISI DENGAN ID ASLI`). Selama ID masih 0, tombol Robux nonaktif tetapi jalur Essence tetap berfungsi.
 
 ## Cara mengetes singkat
 
@@ -88,5 +98,7 @@ Folder `ReplicatedStorage/Remotes` dan `Workspace/Critters` dibuat otomatis oleh
 - Lompat lalu tahan Spasi (gamepad: A, HP: tombol 🪂) untuk melayang. Meteran di bawah layar menunjukkan sisa jarak.
 - Buka Markas, taruh critter dari tas, dan tunggu 60 detik sampai muncul teks "+X ✨ markas".
 - Tombol 📖 di kiri layar membuka Album. Lengkapi satu bioma untuk mendapat hadiah otomatis.
+- Di Toko Telur, pilih telur untuk melihat peluang tiap critter, beli, tunggu waktu eraman, lalu buka lewat tombol 🥚.
+- Tombol ⭐ membuka Toko Spesial. Setiap gamepass & ramuan bisa dibuka gratis dengan Essence.
 - Untuk menambah Essence, gunakan Command Bar dengan tampilan Server:
   `require(game.ServerScriptService.Services.EconomyService).AddEssence(game.Players:GetPlayers()[1], 5000, "Test")`

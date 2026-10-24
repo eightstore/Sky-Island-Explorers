@@ -2,7 +2,7 @@
 --[[
 	IslandService
 	-------------
-	Mengurus pembukaan pulau dan gerbang pulau.
+	Mengurus pembukaan pulau, gerbang pulau, dan teleport pulau (perk "Teleport Pulau").
 
 	Cara kerja gerbang:
 	  • Server memasang ProximityPrompt "Buka Pulau" di setiap objek ber-tag IslandGate.
@@ -13,6 +13,7 @@
 	    Jadi menembus gerbang tidak memberi keuntungan apa pun.
 
 	Remote: UnlockIsland(islandId) -> UnlockResult
+	        TeleportToIsland(islandId) -> ActionResult  (butuh perk IslandTeleport + pulau terbuka)
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -28,6 +29,9 @@ local EconomyService = require(ServerScriptService.Services.EconomyService)
 local LeaderboardService = require(ServerScriptService.Services.LeaderboardService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
 local PromptFactory = require(ServerScriptService.Util.PromptFactory)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
+local MonetizationService = require(ServerScriptService.Services.MonetizationService)
+local GliderService = require(ServerScriptService.Services.GliderService)
 
 type UnlockResult = Types.UnlockResult
 
@@ -126,6 +130,40 @@ local function handleUnlockIsland(player: Player, islandId: any): UnlockResult
 	}
 end
 
+local function handleTeleport(player: Player, islandId: any): Types.ActionResult
+	if not RemoteGuard.IsValidString(islandId, MAX_ISLAND_ID_LENGTH) then
+		RemoteGuard.Flag(player, "TeleportToIsland:BadType")
+		return { Success = false, Message = "Permintaan tidak valid." }
+	end
+	local island = IslandConfig.Get(islandId)
+	if not island then
+		return { Success = false, Message = "Pulau tidak dikenal." }
+	end
+	if not MonetizationService.HasPerk(player, "IslandTeleport") then
+		RemoteGuard.Flag(player, "TeleportToIsland:NoPerk")
+		return { Success = false, Message = "Butuh perk Teleport Pulau 🌀" }
+	end
+	if not IslandService.IsUnlocked(player, island.Id) then
+		return { Success = false, Message = "Buka " .. island.DisplayName .. " dulu." }
+	end
+	local root = RemoteGuard.GetRootPart(player)
+	if not root then
+		return { Success = false, Message = "Karaktermu belum siap." }
+	end
+
+	for _, spawnPoint in CollectionService:GetTagged(ProductConfig.Shop.TeleportSpawnTag) do
+		if spawnPoint:IsA("BasePart") and spawnPoint:GetAttribute(IslandConfig.Gate.IdAttribute) == island.Id then
+			-- Beri jeda anti-cheat agar perpindahan jauh ini tidak dianggap speed-hack
+			GliderService.GrantGrace(player, 3)
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.CFrame = spawnPoint.CFrame + Vector3.new(0, 4, 0)
+			return { Success = true, Message = "🌀 Tiba di " .. island.DisplayName .. "!" }
+		end
+	end
+	warn("[IslandService] Tidak ada Part ber-tag " .. ProductConfig.Shop.TeleportSpawnTag .. " untuk " .. island.Id)
+	return { Success = false, Message = "Titik teleport pulau ini belum dibuat." }
+end
+
 local function setupGate(gate: Instance): ()
 	local islandId = gate:GetAttribute(IslandConfig.Gate.IdAttribute)
 	local island = if typeof(islandId) == "string" then IslandConfig.Get(islandId) else nil
@@ -155,6 +193,15 @@ function IslandService.Start(): ()
 		MaxArgs = 1,
 		OnReject = reject,
 	}, handleUnlockIsland)
+
+	RemoteGuard.BindFunction(Net.Function(Net.Functions.TeleportToIsland), {
+		Key = "TeleportToIsland",
+		Cooldown = ProductConfig.Effects.TeleportCooldown,
+		MaxArgs = 1,
+		OnReject = function(message: string): any
+			return { Success = false, Message = message }
+		end,
+	}, handleTeleport)
 
 	for _, gate in CollectionService:GetTagged(IslandConfig.Gate.Tag) do
 		setupGate(gate)

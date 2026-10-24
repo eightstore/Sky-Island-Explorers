@@ -46,6 +46,8 @@ local EconomyService = require(ServerScriptService.Services.EconomyService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
 local PromptFactory = require(ServerScriptService.Util.PromptFactory)
 local StateViews = require(ServerScriptService.Util.StateViews)
+local MonetizationService = require(ServerScriptService.Services.MonetizationService)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
 
 type CatchResult = Types.CatchResult
 type DepositResult = Types.DepositResult
@@ -100,12 +102,15 @@ function CritterService.SetWorldLuckMultiplier(multiplier: number): ()
 	end
 end
 
--- Luck total pemain. Tahap ini: hanya luck dunia. Sumber luck lain (boost, pass) ditambahkan nanti.
-function CritterService.GetLuck(_player: Player): number
-	return worldLuckMultiplier
+-- Luck total pemain = luck dunia (event) x luck pemain (2x Luck, Lucky Potion)
+function CritterService.GetLuck(player: Player): number
+	return worldLuckMultiplier * MonetizationService.GetLuckMultiplier(player)
 end
 
 local function getBagCapacity(player: Player): number
+	if MonetizationService.HasPerk(player, "InfiniteBag") then
+		return ProductConfig.Effects.InfiniteBagCapacity
+	end
 	return EconomyService.GetUpgradeStats(player, "Bag").Capacity or 0
 end
 
@@ -121,8 +126,32 @@ end
 -- Kirim ulang isi tas ke client (dipakai BaseService saat critter dipindah tas <-> markas)
 CritterService.SyncBag = sendBag
 
--- Kapasitas tas pemain saat ini (dari upgrade Tas)
+-- Kapasitas tas pemain saat ini (dari upgrade Tas, atau perk Tas Tak Terbatas)
 CritterService.GetBagCapacity = getBagCapacity
+
+-- Memasukkan critter ke tas + mencatat koleksi & statistik. Tidak ada yield.
+-- Dipakai saat menangkap dan saat menetaskan telur. Mengembalikan isNew (baru masuk koleksi).
+function CritterService.GiveCritter(profile: DataService.Profile, critterId: string, shiny: boolean): boolean
+	local data = profile.Data
+	table.insert(data.Bag, { CritterId = critterId, Shiny = shiny, CaughtAt = os.time() })
+
+	local entry = data.Collection[critterId]
+	local isNew = entry == nil
+	if not entry then
+		entry = { Caught = 0, Shiny = 0, FirstCaughtAt = os.time() }
+		data.Collection[critterId] = entry
+	end
+	entry.Caught += 1
+	data.Stats.TotalCrittersCaught += 1
+	if shiny then
+		entry.Shiny += 1
+		data.Stats.TotalShinyCaught += 1
+	end
+
+	sendBag(profile)
+	CritterService.CritterCaught:Fire(profile.Player, critterId, shiny, isNew)
+	return isNew
+end
 
 ---------------------------------------------------------------------
 -- Pembuatan visual critter
@@ -461,23 +490,7 @@ local function handleCatchCritter(player: Player, uid: any): CatchResult
 	local critterId = record.CritterId
 	removeCritter(record, true)
 
-	table.insert(data.Bag, { CritterId = critterId, Shiny = shiny, CaughtAt = os.time() })
-
-	local entry = data.Collection[critterId]
-	local isNew = entry == nil
-	if not entry then
-		entry = { Caught = 0, Shiny = 0, FirstCaughtAt = os.time() }
-		data.Collection[critterId] = entry
-	end
-	entry.Caught += 1
-	data.Stats.TotalCrittersCaught += 1
-	if shiny then
-		entry.Shiny += 1
-		data.Stats.TotalShinyCaught += 1
-	end
-
-	sendBag(profile)
-	CritterService.CritterCaught:Fire(player, critterId, shiny, isNew)
+	local isNew = CritterService.GiveCritter(profile, critterId, shiny)
 
 	local def = CritterConfig.Get(critterId)
 	local name = if def then def.DisplayName else critterId

@@ -24,6 +24,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Net = require(ReplicatedStorage.Shared.Net)
 local GliderConfig = require(ReplicatedStorage.Shared.Config.GliderConfig)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
 local UIKit = require(script.Parent.Parent.UI.UIKit)
 local StateController = require(script.Parent.StateController)
 local UIController = require(script.Parent.UIController)
@@ -299,6 +300,9 @@ local function onHeartbeat(): ()
 	end
 
 	local speed = StateController.GetUpgradeStat("Glider", "Speed")
+	if StateController.HasPerk("GliderBoost") then
+		speed *= ProductConfig.Effects.GliderSpeedMultiplier
+	end
 	local linear = mover
 	if linear then
 		linear.VectorVelocity = direction * speed + Vector3.new(0, -GliderConfig.DescentSpeed, 0)

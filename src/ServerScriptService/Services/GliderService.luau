@@ -28,7 +28,9 @@ local Workspace = game:GetService("Workspace")
 
 local Net = require(ReplicatedStorage.Shared.Net)
 local GliderConfig = require(ReplicatedStorage.Shared.Config.GliderConfig)
+local ProductConfig = require(ReplicatedStorage.Shared.Config.ProductConfig)
 local EconomyService = require(ServerScriptService.Services.EconomyService)
+local MonetizationService = require(ServerScriptService.Services.MonetizationService)
 local RemoteGuard = require(ServerScriptService.Util.RemoteGuard)
 
 local GLIDING_ATTRIBUTE = "Gliding"
@@ -136,7 +138,11 @@ local function checkPlayer(player: Player, now: number): ()
 	local gliderStats = EconomyService.GetUpgradeStats(player, "Glider")
 	local maxGlideDistance = (gliderStats.MaxDistance or 0) * antiCheat.GlideDistanceTolerance
 	local canGlide = track.Gliding and not grounded and track.GlideDistance <= maxGlideDistance
-	local baseSpeed = if canGlide then math.max(gliderStats.Speed or 0, humanoid.WalkSpeed) else humanoid.WalkSpeed
+	local glideSpeed = (gliderStats.Speed or 0)
+	if MonetizationService.HasPerk(player, "GliderBoost") then
+		glideSpeed *= ProductConfig.Effects.GliderSpeedMultiplier
+	end
+	local baseSpeed = if canGlide then math.max(glideSpeed, humanoid.WalkSpeed) else humanoid.WalkSpeed
 	local allowedSpeed = baseSpeed * antiCheat.SpeedTolerance + antiCheat.ExtraBuffer
 
 	if track.Gliding and not grounded then

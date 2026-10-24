@@ -42,6 +42,13 @@ export type PlayerStats = {
 	TotalShinyCaught: number,
 	HighestIslandOrder: number,
 	PlayTimeSeconds: number,
+	EggsHatched: number,
+}
+
+-- Telur yang sedang dierami (EggId = "" berarti inkubator kosong)
+export type Incubator = {
+	EggId: string,
+	ReadyAt: number, -- os.time() server saat telur boleh dibuka
 }
 
 -- Struktur data utama yang disimpan di DataStore
@@ -63,6 +70,14 @@ export type PlayerData = {
 	LastPassiveTime: number, -- os.time() terakhir essence pasif markas dihitung
 	PassiveRemainder: number, -- sisa pecahan essence pasif (agar 1.5/menit tidak hilang)
 	AlbumClaimed: { [string]: boolean }, -- IslandId -> hadiah album sudah diberikan
+	Incubator: Incubator,
+	OwnedPerks: { [string]: boolean }, -- perk gamepass yang dibuka GRATIS dengan essence
+	LuckBoostEndsAt: number, -- os.time() berakhirnya Lucky Potion
+	InstantHatchCredits: number, -- Instant Hatch yang dibeli saat tidak ada telur (dipakai otomatis)
+	ReviveCredits: number, -- Revive Streak yang dibeli saat streak belum putus (dipakai otomatis)
+	LostStreak: number, -- streak yang terakhir putus (bisa dipulihkan)
+	LostStreakDay: number, -- hari UTC saat streak putus
+	ProcessedReceipts: { [string]: number }, -- PurchaseId -> os.time(), untuk ProcessReceipt idempoten
 }
 
 -- Versi ringkas critter (isi tas / markas) yang dikirim ke client
@@ -98,6 +113,16 @@ export type ClientSnapshot = {
 export type ActionResult = {
 	Success: boolean,
 	Message: string,
+}
+
+-- Hasil remote HatchEgg
+export type HatchResult = {
+	Success: boolean,
+	Message: string,
+	EggId: string?,
+	CritterId: string?,
+	Shiny: boolean?,
+	IsNew: boolean?,
 }
 
 -- Hasil remote PurchaseUpgrade

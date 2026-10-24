@@ -14,6 +14,8 @@
 	  GliderController  -> melayang dengan glider
 	  BaseController    -> jendela & tampilan markas
 	  AlbumController   -> album koleksi
+	  EggController     -> toko telur, inkubator, animasi buka telur
+	  StoreController   -> Toko Spesial (gamepass/item, Robux & Essence), teleport, indikator luck
 ]]
 
 if not game:IsLoaded() then
@@ -37,6 +39,8 @@ local orderedControllers: { Controller } = {
 	require(Controllers.GliderController),
 	require(Controllers.BaseController),
 	require(Controllers.AlbumController),
+	require(Controllers.EggController),
+	require(Controllers.StoreController),
 }
 
 for _, controller in orderedControllers do
